@@ -11,6 +11,7 @@ from app.routers.system import router as system_router
 from app.routers.tickers import router as tickers_router
 from app.routers.posts import router as posts_router
 from app.routers.subreddits import router as subreddits_router
+from app.routers.scraper import router as scraper_router
 
 app_start_time: float = 0.0
 
@@ -32,6 +33,7 @@ app.include_router(system_router)
 app.include_router(tickers_router)
 app.include_router(posts_router)
 app.include_router(subreddits_router)
+app.include_router(scraper_router)
 
 app.add_middleware(
     CORSMiddleware,
