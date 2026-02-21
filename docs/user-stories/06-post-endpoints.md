@@ -2,7 +2,7 @@
 
 **Phase**: 3 — Data API Layer
 **Dependencies**: 01, 04
-**Status**: not started
+**Status**: done
 
 ## Summary
 
@@ -65,13 +65,13 @@ Build API endpoints for retrieving posts filtered by ticker or subreddit, with p
 
 ## Acceptance Criteria
 
-- [ ] Posts filterable by ticker, subreddit, or both
-- [ ] Pagination returns correct total counts and page data
-- [ ] All three sort options work correctly
-- [ ] Each post includes its list of mentioned tickers
-- [ ] Reddit URL is correctly constructed from post data
-- [ ] `selftext_preview` is truncated to ~200 characters
-- [ ] Missing/invalid parameters return 422 with helpful messages
+- [x] Posts filterable by ticker, subreddit, or both
+- [x] Pagination returns correct total counts and page data
+- [x] All three sort options work correctly
+- [x] Each post includes its list of mentioned tickers
+- [x] Reddit URL is correctly constructed from post data
+- [x] `selftext_preview` is truncated to ~200 characters
+- [x] Missing/invalid parameters return 422 with helpful messages
 
 ## Technical Notes
 

@@ -45,7 +45,7 @@ When implementing stories, follow these rules:
 | 03 | App Shell & Side Nav | done |
 | 04 | API Health & Config | done |
 | 05 | Ticker Endpoints | done |
-| 06 | Post Endpoints | not started |
+| 06 | Post Endpoints | done |
 | 07 | Subreddit Management API | not started |
 | 08 | Scraper as Background Task | not started |
 | 09 | Scraper Monitoring Endpoint | not started |
