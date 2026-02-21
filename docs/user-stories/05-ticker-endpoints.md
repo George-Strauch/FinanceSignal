@@ -2,7 +2,7 @@
 
 **Phase**: 3 — Data API Layer
 **Dependencies**: 01, 04
-**Status**: not started
+**Status**: done
 
 ## Summary
 
@@ -96,12 +96,12 @@ Build API endpoints for retrieving trending tickers, ticker details, and ticker 
 
 ## Acceptance Criteria
 
-- [ ] Trending tickers endpoint returns correct data for all window values
-- [ ] Ticker detail endpoint returns mentions by subreddit and time-bucketed data
-- [ ] Search endpoint returns matching tickers ordered by popularity
-- [ ] Invalid window values return 422 with clear error message
-- [ ] Unknown ticker returns empty/zero-count response (not 404)
-- [ ] Queries are efficient (appropriate indexes exist in `sentinel.db`)
+- [x] Trending tickers endpoint returns correct data for all window values
+- [x] Ticker detail endpoint returns mentions by subreddit and time-bucketed data
+- [x] Search endpoint returns matching tickers ordered by popularity
+- [x] Invalid window values return 422 with clear error message
+- [x] Unknown ticker returns empty/zero-count response (not 404)
+- [x] Queries are efficient (appropriate indexes exist in `sentinel.db`)
 
 ## Technical Notes
 

@@ -44,7 +44,7 @@ When implementing stories, follow these rules:
 | 02 | React Frontend Init | done |
 | 03 | App Shell & Side Nav | done |
 | 04 | API Health & Config | done |
-| 05 | Ticker Endpoints | not started |
+| 05 | Ticker Endpoints | done |
 | 06 | Post Endpoints | not started |
 | 07 | Subreddit Management API | not started |
 | 08 | Scraper as Background Task | not started |
