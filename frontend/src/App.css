@@ -1,0 +1,59 @@
+/* ── CSS Variables ──────────────────────────────────────────────── */
+
+:root {
+  /* Layout */
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 60px;
+  --topbar-height: 48px;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: rgb(var(--secondary-color));
+  color: rgb(var(--hard-text));
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+a {
+  color: rgb(var(--accent));
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--soft-border), 0.4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--soft-border), 0.6);
+}

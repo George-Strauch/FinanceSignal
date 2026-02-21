@@ -1,0 +1,54 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--topbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background-color: rgb(var(--primary-color));
+  border-bottom: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  z-index: 100;
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgb(var(--hard-text));
+  user-select: none;
+}
+
+.topbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.topbar-btn:hover {
+  background-color: rgba(var(--soft-border), 0.2);
+  color: rgb(var(--hard-text));
+}
+
+.topbar-btn svg {
+  width: 18px;
+  height: 18px;
+}

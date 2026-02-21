@@ -1,0 +1,119 @@
+/* ── Dashboard Layout ──────────────────────────────────────────── */
+
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────── */
+
+.dash-card {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.dash-card h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 16px;
+}
+
+/* ── Health Status ─────────────────────────────────────────────── */
+
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected {
+  background: rgb(var(--color-success));
+  box-shadow: 0 0 6px rgba(var(--color-success), 0.4);
+}
+
+.status-dot.disconnected {
+  background: rgb(var(--color-error));
+  box-shadow: 0 0 6px rgba(var(--color-error), 0.4);
+}
+
+.status-dot.loading {
+  background: rgb(var(--color-warning));
+}
+
+.status-label {
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+.status-label.connected { color: rgb(var(--color-success)); }
+.status-label.disconnected { color: rgb(var(--color-error)); }
+.status-label.loading { color: rgb(var(--color-warning)); }
+
+.uptime {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+}
+
+/* ── Stats Grid ────────────────────────────────────────────────── */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 14px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+  margin-top: 4px;
+}
+
+/* ── Subreddit List ────────────────────────────────────────────── */
+
+.subreddit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+}
+
+.subreddit-chip {
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  color: rgb(var(--hard-text));
+}
+
+/* ── Loading / Error states ────────────────────────────────────── */
+
+.dash-placeholder {
+  color: rgb(var(--soft-text));
+  font-size: 0.88rem;
+}

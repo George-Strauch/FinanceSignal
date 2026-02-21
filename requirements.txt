@@ -17,3 +17,13 @@ six==1.17.0
 soupsieve==2.8.3
 typing_extensions==4.15.0
 urllib3==2.6.3
+
+# FastAPI
+anyio==4.12.1
+fastapi==0.129.2
+httptools==0.7.1
+starlette==0.52.1
+uvicorn==0.41.0
+uvloop==0.22.1
+watchfiles==1.1.1
+websockets==16.0
