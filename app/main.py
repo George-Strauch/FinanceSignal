@@ -10,6 +10,7 @@ from app.config import CORS_ORIGINS
 from app.routers.system import router as system_router
 from app.routers.tickers import router as tickers_router
 from app.routers.posts import router as posts_router
+from app.routers.subreddits import router as subreddits_router
 
 app_start_time: float = 0.0
 
@@ -30,6 +31,7 @@ app = FastAPI(
 app.include_router(system_router)
 app.include_router(tickers_router)
 app.include_router(posts_router)
+app.include_router(subreddits_router)
 
 app.add_middleware(
     CORSMiddleware,
