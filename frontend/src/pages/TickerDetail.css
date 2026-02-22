@@ -77,6 +77,92 @@
   border-color: rgba(var(--accent), 0.6);
 }
 
+/* ── Tag Quick-Add ───────────────────────────────────────────── */
+
+.td-tag-add-wrap {
+  position: relative;
+  display: inline-flex;
+  align-self: center;
+}
+
+.td-tag-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 12px;
+  background: transparent;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.td-tag-add-btn:hover {
+  border-color: rgb(var(--accent));
+  color: rgb(var(--accent));
+  background: rgba(var(--accent), 0.06);
+}
+
+.td-tag-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 6px;
+  min-width: 180px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.td-tag-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  transition: background 0.12s;
+  text-align: left;
+  width: 100%;
+}
+
+.td-tag-menu-item:hover {
+  background: rgba(var(--soft-border), 0.12);
+}
+
+.td-tag-menu-item.active {
+  background: rgba(var(--accent), 0.08);
+}
+
+.td-tag-menu-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.td-tag-menu-name {
+  flex: 1;
+}
+
+.td-tag-menu-check {
+  color: rgb(var(--accent));
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .td-mention-count {
   font-size: 0.85rem;
   color: rgb(var(--soft-text));

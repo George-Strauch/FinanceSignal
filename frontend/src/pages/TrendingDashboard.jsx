@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AreaChart, Area, ResponsiveContainer } from 'recharts'
-import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart, FiArrowRight } from 'react-icons/fi'
+import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart, FiArrowRight, FiFilter } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import './TrendingDashboard.css'
@@ -63,10 +63,12 @@ function TickerCard({ ticker, onClick }) {
       <div className="ticker-card-sparkline">
         <SparklineChart data={ticker.sparkline} id={ticker.ticker} />
       </div>
-      {ticker.subreddits.length > 0 && (
-        <div className="ticker-card-subs">
-          {ticker.subreddits.map((sub) => (
-            <span key={sub} className="sub-chip">r/{sub}</span>
+      {ticker.tags?.length > 0 && (
+        <div className="ticker-card-tags">
+          {ticker.tags.map((tag) => (
+            <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
+              {tag.name}
+            </span>
           ))}
         </div>
       )}
@@ -101,6 +103,10 @@ export default function TrendingDashboard() {
   const [sortKey, setSortKey] = useState('mention_count')
   const [sortDir, setSortDir] = useState('desc')
   const [refreshing, setRefreshing] = useState(false)
+  const [hiddenTags, setHiddenTags] = usePersistedState('trending-hidden-tags', [])
+  const [allTagSets, setAllTagSets] = useState([])
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterRef = useRef(null)
   const intervalRef = useRef(null)
 
   const fetchData = useCallback(async (isRefresh = false) => {
@@ -122,6 +128,20 @@ export default function TrendingDashboard() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Fetch tag sets for filter
+  useEffect(() => {
+    get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
+  }, [])
+
+  // Close filter dropdown on click outside
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (filterRef.current && !filterRef.current.contains(e.target)) setFilterOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   // Auto-refresh
   useEffect(() => {
@@ -152,8 +172,21 @@ export default function TrendingDashboard() {
     }
   }
 
-  const sortedTickers = data?.tickers
-    ? [...data.tickers].sort((a, b) => {
+  const toggleTag = (tagId) => {
+    setHiddenTags((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    )
+  }
+
+  const filteredTickers = data?.tickers
+    ? data.tickers.filter((t) => {
+        if (hiddenTags.length === 0) return true
+        return !t.tags?.some((tag) => hiddenTags.includes(tag.id))
+      })
+    : []
+
+  const sortedTickers = filteredTickers.length > 0
+    ? [...filteredTickers].sort((a, b) => {
         let aVal = a[sortKey]
         let bVal = b[sortKey]
         if (sortKey === 'ticker') {
@@ -161,13 +194,9 @@ export default function TrendingDashboard() {
           bVal = bVal.toLowerCase()
           return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
         }
-        if (sortKey === 'subreddits') {
-          aVal = a.subreddits.length
-          bVal = b.subreddits.length
-        }
         return sortDir === 'asc' ? aVal - bVal : bVal - aVal
       })
-    : []
+    : filteredTickers
 
   const sortIndicator = (key) => {
     if (sortKey !== key) return ''
@@ -220,6 +249,40 @@ export default function TrendingDashboard() {
             <FiRefreshCw />
             {autoRefresh && <span className="countdown">{countdown}s</span>}
           </button>
+          {allTagSets.length > 0 && (
+            <div className="tag-filter-wrap" ref={filterRef}>
+              <button
+                className={`toggle-btn tag-filter-btn ${hiddenTags.length > 0 ? 'active' : ''}`}
+                onClick={() => setFilterOpen((v) => !v)}
+                title="Filter by tags"
+              >
+                <FiFilter />
+                {hiddenTags.length > 0 && <span className="tag-filter-count">{hiddenTags.length}</span>}
+              </button>
+              {filterOpen && (
+                <div className="tag-filter-dropdown">
+                  <div className="tag-filter-title">Hide tickers tagged as:</div>
+                  {allTagSets.map((ts) => (
+                    <label key={ts.id} className="tag-filter-item">
+                      <input
+                        type="checkbox"
+                        checked={hiddenTags.includes(ts.id)}
+                        onChange={() => toggleTag(ts.id)}
+                      />
+                      <span className="tag-filter-swatch" style={{ backgroundColor: ts.color }} />
+                      <span>{ts.name}</span>
+                      <span className="tag-filter-ticker-count">{ts.tickers.length}</span>
+                    </label>
+                  ))}
+                  {hiddenTags.length > 0 && (
+                    <button className="tag-filter-clear" onClick={() => setHiddenTags([])}>
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -259,9 +322,7 @@ export default function TrendingDashboard() {
                 <th className="sortable" onClick={() => handleSort('mention_count')}>
                   Mentions{sortIndicator('mention_count')}
                 </th>
-                <th className="sortable" onClick={() => handleSort('subreddits')}>
-                  Subreddits{sortIndicator('subreddits')}
-                </th>
+                <th>Tags</th>
                 <th>Sparkline</th>
                 <th>Trend</th>
                 <th>Sentiment</th>
@@ -274,9 +335,11 @@ export default function TrendingDashboard() {
                   <td className="ticker-cell">{t.ticker}</td>
                   <td>{t.mention_count.toLocaleString()}</td>
                   <td>
-                    <div className="table-subs">
-                      {t.subreddits.map((sub) => (
-                        <span key={sub} className="sub-chip">r/{sub}</span>
+                    <div className="table-tags">
+                      {t.tags?.map((tag) => (
+                        <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
+                          {tag.name}
+                        </span>
                       ))}
                     </div>
                   </td>

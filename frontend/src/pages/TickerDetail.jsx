@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Line, Bar,
 } from 'recharts'
-import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight } from 'react-icons/fi'
-import { get } from '../api/client'
+import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus } from 'react-icons/fi'
+import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
 import './TickerDetail.css'
@@ -115,6 +115,11 @@ export default function TickerDetail() {
   const [mentionData, setMentionData] = useState(null)
   const [mentionLoading, setMentionLoading] = useState(false)
 
+  // Tag quick-add state
+  const [allTagSets, setAllTagSets] = useState([])
+  const [tagMenuOpen, setTagMenuOpen] = useState(false)
+  const tagMenuRef = useRef(null)
+
   // Fetch Reddit mention detail
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -177,6 +182,37 @@ export default function TickerDetail() {
     if (mentionOverlay) fetchMentions()
   }, [mentionOverlay, fetchMentions])
 
+  // Fetch all tag sets for quick-add menu
+  useEffect(() => {
+    get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
+  }, [])
+
+  // Close tag menu on click outside
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (tagMenuRef.current && !tagMenuRef.current.contains(e.target)) setTagMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const tickerUpper = ticker?.toUpperCase()
+  const currentTagIds = new Set(data?.tags?.map((t) => t.id) || [])
+
+  const handleToggleTag = async (tagSet) => {
+    const isTagged = currentTagIds.has(tagSet.id)
+    try {
+      if (isTagged) {
+        await del(`/ticker-tags/${tagSet.id}/tickers/${tickerUpper}`)
+      } else {
+        await post(`/ticker-tags/${tagSet.id}/tickers`, { tickers: [tickerUpper] })
+      }
+      // Refresh both detail data (for tags) and all tag sets (for counts)
+      fetchDetail()
+      get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
+    } catch {}
+  }
+
   const subreddits = data ? Object.keys(data.mentions_by_subreddit) : []
   const chartData = data ? pivotChartData(data.mentions_over_time, subreddits) : []
   const topSubreddit = subreddits.length > 0 ? subreddits[0] : '-'
@@ -200,6 +236,40 @@ export default function TickerDetail() {
         <div className="td-title-group">
           <div className="td-title-row">
             <h1 className="td-ticker">{ticker?.toUpperCase()}</h1>
+            {data?.tags?.map((tag) => (
+              <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
+                {tag.name}
+              </span>
+            ))}
+            {allTagSets.length > 0 && (
+              <div className="td-tag-add-wrap" ref={tagMenuRef}>
+                <button
+                  className="td-tag-add-btn"
+                  onClick={() => setTagMenuOpen((v) => !v)}
+                  title="Add or remove tags"
+                >
+                  <FiPlus />
+                </button>
+                {tagMenuOpen && (
+                  <div className="td-tag-menu">
+                    {allTagSets.map((ts) => {
+                      const active = currentTagIds.has(ts.id)
+                      return (
+                        <button
+                          key={ts.id}
+                          className={`td-tag-menu-item ${active ? 'active' : ''}`}
+                          onClick={() => handleToggleTag(ts)}
+                        >
+                          <span className="td-tag-menu-swatch" style={{ backgroundColor: ts.color }} />
+                          <span className="td-tag-menu-name">{ts.name}</span>
+                          {active && <span className="td-tag-menu-check">&#10003;</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             {marketInfo?.name && (
               <span className="td-company-name">{marketInfo.name}</span>
             )}

@@ -82,7 +82,14 @@ export default function Tickers() {
               tabIndex={0}
               onKeyDown={(e) => e.key === 'Enter' && navigate(`/tickers/${t.ticker}`)}
             >
-              <span className="tickers-row-symbol">{t.ticker}</span>
+              <span className="tickers-row-symbol">
+                {t.ticker}
+                {t.tags?.map((tag) => (
+                  <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color, marginLeft: 6 }}>
+                    {tag.name}
+                  </span>
+                ))}
+              </span>
               <span className="tickers-row-count">{t.mention_count.toLocaleString()} mentions</span>
             </div>
           ))}

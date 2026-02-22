@@ -182,6 +182,120 @@
   color: rgb(var(--soft-text));
 }
 
+/* ── Tag Chips (layout) ───────────────────────────────────────── */
+
+.ticker-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.table-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ── Tag Filter ──────────────────────────────────────────────── */
+
+.tag-filter-wrap {
+  position: relative;
+}
+
+.tag-filter-btn {
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+}
+
+.tag-filter-count {
+  font-size: 0.7rem;
+  background: rgb(var(--accent));
+  color: #fff;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.tag-filter-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 10px;
+  min-width: 220px;
+  z-index: 100;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tag-filter-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  margin-bottom: 4px;
+}
+
+.tag-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  transition: background 0.12s;
+}
+
+.tag-filter-item:hover {
+  background: rgba(var(--soft-border), 0.1);
+}
+
+.tag-filter-item input[type="checkbox"] {
+  accent-color: rgb(var(--accent));
+}
+
+.tag-filter-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tag-filter-ticker-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: rgb(var(--soft-text));
+}
+
+.tag-filter-clear {
+  background: transparent;
+  border: none;
+  color: rgb(var(--accent));
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 6px 4px;
+  text-align: left;
+  border-top: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  margin-top: 4px;
+}
+
+.tag-filter-clear:hover {
+  text-decoration: underline;
+}
+
 /* ── Table View ───────────────────────────────────────────────── */
 
 .ticker-table-wrap {

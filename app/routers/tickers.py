@@ -11,6 +11,7 @@ from sentinel.sentiment import (
     signals_from_reddit_comments,
     signals_from_reddit_posts,
 )
+from app.routers.ticker_tags import _read as _read_tags
 
 router = APIRouter(prefix="/api/tickers")
 
@@ -48,6 +49,17 @@ def _bucket_format(window: str) -> str:
     if window in ("7d", "30d"):
         return "%Y-%m-%d"
     return "%Y-%m-%d %H:00:00"
+
+
+def _tag_lookup() -> dict[str, list[dict]]:
+    """Build ticker → list of {id, name, color} from ticker_tags.json."""
+    data = _read_tags()
+    result: dict[str, list[dict]] = {}
+    for ts in data["tag_sets"]:
+        tag_info = {"id": ts["id"], "name": ts["name"], "color": ts["color"]}
+        for ticker in ts["tickers"]:
+            result.setdefault(ticker, []).append(tag_info)
+    return result
 
 
 def _ensure_indexes(db: RedditDatabase):
@@ -140,7 +152,13 @@ def search_tickers(
         (q.upper(), limit),
     ).fetchall()
 
-    return {"results": [dict(r) for r in rows]}
+    tag_map = _tag_lookup()
+    results = []
+    for r in rows:
+        d = dict(r)
+        d["tags"] = tag_map.get(d["ticker"], [])
+        results.append(d)
+    return {"results": results}
 
 
 @router.get("/trending")
@@ -210,6 +228,9 @@ def trending_tickers(
     # Batch sentiment for all tickers
     sentiment_map = _compute_batch_sentiment(db, tickers_in_result, cutoff)
 
+    # Tag lookup
+    tag_map = _tag_lookup()
+
     def _compute_trend(points: list[dict]) -> str:
         """Compare first-half vs second-half mention sums."""
         if len(points) < 2:
@@ -243,6 +264,7 @@ def trending_tickers(
                 "sparkline": sparkline_map.get(r["ticker"], []),
                 "trend": _compute_trend(sparkline_map.get(r["ticker"], [])),
                 "sentiment": sentiment_map.get(r["ticker"], {"score": 0, "label": "neutral", "signal_count": 0, "sources": {}, "confidence": "low"}),
+                "tags": tag_map.get(r["ticker"], []),
             }
             for r in rows
         ],
@@ -300,6 +322,7 @@ def ticker_detail(
     ).fetchall()
 
     sentiment = _compute_ticker_sentiment(db, ticker_upper, cutoff)
+    tag_map = _tag_lookup()
 
     return {
         "ticker": ticker_upper,
@@ -307,6 +330,7 @@ def ticker_detail(
         "total_mentions": total,
         "unique_posts": unique_posts,
         "sentiment": sentiment,
+        "tags": tag_map.get(ticker_upper, []),
         "mentions_by_subreddit": {r["subreddit"]: r["cnt"] for r in by_sub},
         "mentions_over_time": [dict(r) for r in over_time],
     }

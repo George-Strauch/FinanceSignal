@@ -14,6 +14,7 @@ from app.routers.subreddits import router as subreddits_router
 from app.routers.processes import router as processes_router
 from app.routers.market import router as market_router
 from app.routers.mentions import router as mentions_router
+from app.routers.ticker_tags import router as ticker_tags_router
 
 app_start_time: float = 0.0
 
@@ -41,6 +42,7 @@ app.include_router(subreddits_router)
 app.include_router(processes_router)
 app.include_router(market_router)
 app.include_router(mentions_router)
+app.include_router(ticker_tags_router)
 
 app.add_middleware(
     CORSMiddleware,

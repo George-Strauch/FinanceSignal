@@ -1,0 +1,80 @@
+{
+    "tag_sets": [
+        {
+            "id": "ambiguous",
+            "name": "Ambiguous",
+            "color": "#ef4444",
+            "description": "Tickers that commonly match non-financial terms",
+            "tickers": [
+                "AI",
+                "LLM",
+                "ALL",
+                "ARE",
+                "BE",
+                "CEO",
+                "DD",
+                "EV",
+                "FOR",
+                "GO",
+                "HE",
+                "IT",
+                "LOW",
+                "MAN",
+                "NOW",
+                "ONE",
+                "OR",
+                "OUT",
+                "RUN",
+                "SO",
+                "TRUE",
+                "TWO",
+                "US",
+                "WELL",
+                "IRA",
+                "DCA",
+                "TACO",
+                "FCF",
+                "IV"
+            ]
+        },
+        {
+            "id": "crypto",
+            "name": "Crypto",
+            "color": "#f59e0b",
+            "description": "Cryptocurrency-related tickers",
+            "tickers": [
+                "BTC",
+                "ETH",
+                "SOL",
+                "DOGE",
+                "ADA",
+                "XRP",
+                "MARA",
+                "RIOT",
+                "COIN",
+                "MSTR"
+            ]
+        },
+        {
+            "id": "etf",
+            "name": "ETF",
+            "color": "#3b82f6",
+            "description": "Exchange-traded funds",
+            "tickers": [
+                "SPY",
+                "QQQ",
+                "VOO",
+                "VTI",
+                "IWM",
+                "DIA",
+                "ARKK",
+                "XLF",
+                "XLE",
+                "GLD",
+                "SLV",
+                "TLT",
+                "SCHD"
+            ]
+        }
+    ]
+}

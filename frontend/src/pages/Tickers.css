@@ -99,6 +99,8 @@
   font-size: 1rem;
   font-weight: 700;
   color: rgb(var(--hard-text));
+  display: flex;
+  align-items: center;
 }
 
 .tickers-row-count {
