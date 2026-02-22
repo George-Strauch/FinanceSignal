@@ -2,7 +2,7 @@
 
 **Phase**: 7 — Enhancement Features
 **Dependencies**: 05, 10, 11
-**Status**: not started
+**Status**: done
 
 ## Summary
 
@@ -43,12 +43,12 @@ Extend `GET /api/tickers/trending` and `GET /api/tickers/{ticker}` responses to 
 
 ## Acceptance Criteria
 
-- [ ] Sentiment score is calculated for each ticker based on post/comment data
-- [ ] Trending endpoint and ticker detail endpoint include sentiment data
-- [ ] Dashboard ticker cards show sentiment badges
-- [ ] Ticker detail page shows sentiment indicator
-- [ ] Sentiment colors are consistent and use theme variables
-- [ ] Score handles edge cases (no data → neutral, single post → neutral)
+- [x] Sentiment score is calculated for each ticker based on post/comment data
+- [x] Trending endpoint and ticker detail endpoint include sentiment data
+- [x] Dashboard ticker cards show sentiment badges
+- [x] Ticker detail page shows sentiment indicator
+- [x] Sentiment colors are consistent and use theme variables
+- [x] Score handles edge cases (no data → neutral, single post → neutral)
 
 ## Technical Notes
 

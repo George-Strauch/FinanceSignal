@@ -3,15 +3,9 @@ import Layout from './components/Layout'
 import TrendingDashboard from './pages/TrendingDashboard'
 import Tickers from './pages/Tickers'
 import TickerDetail from './pages/TickerDetail'
+import Subreddits from './pages/Subreddits'
+import ProcessMonitor from './pages/ProcessMonitor'
 import SystemStatus from './pages/SystemStatus'
-
-function Subreddits() {
-  return <h1>Subreddits</h1>
-}
-
-function ScraperMonitor() {
-  return <h1>Scraper Monitor</h1>
-}
 
 function App() {
   return (
@@ -21,7 +15,7 @@ function App() {
         <Route path="/tickers" element={<Tickers />} />
         <Route path="/tickers/:ticker" element={<TickerDetail />} />
         <Route path="/subreddits" element={<Subreddits />} />
-        <Route path="/scraper" element={<ScraperMonitor />} />
+        <Route path="/processes" element={<ProcessMonitor />} />
         <Route path="/system" element={<SystemStatus />} />
       </Route>
     </Routes>

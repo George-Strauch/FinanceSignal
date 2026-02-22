@@ -11,7 +11,9 @@ from app.routers.system import router as system_router
 from app.routers.tickers import router as tickers_router
 from app.routers.posts import router as posts_router
 from app.routers.subreddits import router as subreddits_router
-from app.routers.scraper import router as scraper_router
+from app.routers.processes import router as processes_router
+from app.routers.market import router as market_router
+from app.routers.mentions import router as mentions_router
 
 app_start_time: float = 0.0
 
@@ -20,6 +22,9 @@ app_start_time: float = 0.0
 async def lifespan(app: FastAPI):
     global app_start_time
     app_start_time = time.time()
+    from app.process_manager import process_manager
+    process_manager.load_jobs()
+    await process_manager.auto_start()
     yield
 
 
@@ -33,7 +38,9 @@ app.include_router(system_router)
 app.include_router(tickers_router)
 app.include_router(posts_router)
 app.include_router(subreddits_router)
-app.include_router(scraper_router)
+app.include_router(processes_router)
+app.include_router(market_router)
+app.include_router(mentions_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -77,3 +77,7 @@ Build a detailed monitoring endpoint that returns scraper operational data: last
 - The scraper state object from story 08 should be extended to track these metrics.
 - Use a `collections.deque(maxlen=100)` for the log ring buffer.
 - Per-subreddit stats can be computed from `fetch_history` table for historical data, supplemented with in-memory stats for the current cycle.
+
+## Update — Process Manager Migration
+
+Monitoring is now served via the generic process monitor endpoint `GET /api/processes/{job_id}`. For the `reddit_scraper` job, the response includes a `monitor` object with the same scraper/cycle/per_subreddit data previously returned by `/api/scraper/monitor`. Logs are available at `GET /api/processes/{job_id}/logs`.

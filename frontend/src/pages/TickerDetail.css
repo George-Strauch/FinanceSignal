@@ -37,12 +37,44 @@
   min-width: 0;
 }
 
+.td-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .td-ticker {
   font-size: 1.8rem;
   font-weight: 800;
   color: rgb(var(--hard-text));
   margin: 0;
   line-height: 1.2;
+}
+
+.td-company-name {
+  font-size: 0.95rem;
+  color: rgb(var(--soft-text));
+  font-weight: 400;
+}
+
+.td-yahoo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: rgb(var(--accent));
+  text-decoration: none;
+  padding: 3px 10px;
+  border: 1px solid rgba(var(--accent), 0.3);
+  border-radius: 6px;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.td-yahoo-link:hover {
+  background: rgba(var(--accent), 0.08);
+  border-color: rgba(var(--accent), 0.6);
 }
 
 .td-mention-count {
@@ -92,6 +124,40 @@
   font-size: 0.88rem;
 }
 
+/* ── Market Info Cards ───────────────────────────────────────── */
+
+.td-market-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.td-price-change {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.td-price-change.positive {
+  color: rgb(52, 211, 153);
+}
+
+.td-price-change.negative {
+  color: rgb(248, 113, 113);
+}
+
+.td-market-cap {
+  font-size: 1.15rem;
+}
+
+.td-stat-label-detail {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* ── Stats Cards ──────────────────────────────────────────────── */
 
 .td-stats {
@@ -124,6 +190,128 @@
   margin-top: 4px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ── Sentiment Card ──────────────────────────────────────────── */
+
+.td-sentiment-card {
+  border-width: 2px;
+}
+
+.td-sentiment-bullish {
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+.td-sentiment-bearish {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.td-sentiment-neutral {
+  border-color: rgba(var(--soft-border), var(--soft-border-alpha));
+}
+
+.td-sentiment-score {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.td-sentiment-score-bullish {
+  color: rgb(52, 211, 153);
+}
+
+.td-sentiment-score-bearish {
+  color: rgb(248, 113, 113);
+}
+
+.td-sentiment-score-neutral {
+  color: rgb(var(--soft-text));
+}
+
+.td-sentiment-label-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  margin-top: 2px;
+  color: rgb(var(--hard-text));
+}
+
+.td-sentiment-sources {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.td-sentiment-source-chip {
+  background: rgba(var(--soft-border), 0.2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  color: rgb(var(--soft-text));
+}
+
+/* ── Price Chart Section ─────────────────────────────────────── */
+
+.td-price-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.td-price-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.td-price-header h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin: 0;
+}
+
+.td-price-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.td-overlay-toggle {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.td-overlay-toggle:hover {
+  border-color: rgba(var(--accent), 0.5);
+  color: rgb(var(--accent));
+}
+
+.td-overlay-toggle.active {
+  background: rgba(var(--accent), 0.12);
+  border-color: rgb(var(--accent));
+  color: rgb(var(--accent));
 }
 
 /* ── Chart Section ────────────────────────────────────────────── */
@@ -272,12 +460,26 @@
     font-size: 1.4rem;
   }
 
-  .td-stats {
+  .td-stats,
+  .td-market-info {
     grid-template-columns: repeat(2, 1fr);
   }
 
   .td-sub-name {
     min-width: 80px;
     font-size: 0.75rem;
+  }
+
+  .td-price-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .td-price-controls {
+    width: 100%;
+  }
+
+  .td-price-controls .td-window-selector {
+    flex: 1;
   }
 }

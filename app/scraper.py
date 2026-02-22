@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass, field
 
 from sentinel.config import load_subreddits, DEFAULT_PAGE_LIMIT
@@ -44,30 +44,6 @@ class ScraperState:
     log_buffer: deque = field(default_factory=lambda: deque(maxlen=100))
     _task: asyncio.Task | None = field(default=None, repr=False)
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-
-
-class ScraperLogHandler(logging.Handler):
-    """Logging handler that appends entries to the scraper state's ring buffer."""
-
-    def __init__(self, buffer: deque):
-        super().__init__()
-        self._buffer = buffer
-
-    def emit(self, record: logging.LogRecord):
-        self._buffer.append({
-            "timestamp": record.created,
-            "level": record.levelname,
-            "message": self.format(record),
-        })
-
-
-# Module-level singleton
-scraper_state = ScraperState()
-
-# Attach log handler to capture scraper logs into the ring buffer
-_log_handler = ScraperLogHandler(scraper_state.log_buffer)
-_log_handler.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(_log_handler)
 
 
 async def run_collector(state: ScraperState):
@@ -255,3 +231,19 @@ def _process_tickers():
             if mentions:
                 db.save_ticker_mentions(mentions)
             db.commit()
+
+
+def reprocess_all_tickers():
+    """Re-extract tickers from all posts and comments (one-time cleanup).
+
+    Resets all processed markers and re-runs ticker extraction from scratch.
+    Runs synchronously in a thread via the process manager.
+    """
+    logger.info("Starting full ticker reprocess")
+    with RedditDatabase() as db:
+        db.conn.execute("DELETE FROM processed_sources")
+        db.conn.execute("DELETE FROM ticker_mentions")
+        db.commit()
+    logger.info("Cleared processed markers and ticker mentions")
+    _process_tickers()
+    logger.info("Ticker reprocess complete")

@@ -13,8 +13,8 @@ Stories are numbered in dependency order — later stories build on earlier ones
 | 1 — Project Scaffolding | 01–02 | FastAPI + React project setup |
 | 2 — App Shell & Layout  | 03–04 | Side nav, theming, health checks |
 | 3 — Data API Layer      | 05–07 | Ticker, post, and subreddit endpoints |
-| 4 — Scraper Integration | 08–09 | Background task, monitoring |
-| 5 — Dashboard Views     | 10–13 | Trending, detail, feed, monitor panels |
+| 4 — Process Integration | 08–09 | Background task, process monitoring |
+| 5 — Dashboard Views     | 10–13 | Trending, detail, feed, process monitor panel |
 | 6 — Subreddit Mgmt UI   | 14     | Subreddit CRUD page |
 | 7 — Enhancements        | 15–20 | Sentiment, comparison, heatmap, export, watchlist, alerts |
 
@@ -46,14 +46,14 @@ When implementing stories, follow these rules:
 | 04 | API Health & Config | done |
 | 05 | Ticker Endpoints | done |
 | 06 | Post Endpoints | done |
-| 07 | Subreddit Management API | not started |
-| 08 | Scraper as Background Task | not started |
-| 09 | Scraper Monitoring Endpoint | not started |
-| 10 | Trending Dashboard | not started |
-| 11 | Ticker Detail View | not started |
-| 12 | Post Feed Component | not started |
-| 13 | Scraper Monitor Panel | not started |
-| 14 | Subreddit Management Page | not started |
+| 07 | Subreddit Management API | done |
+| 08 | Scraper as Background Task (via Process Manager) | done |
+| 09 | Process Monitoring Endpoints | done |
+| 10 | Trending Dashboard | done |
+| 11 | Ticker Detail View | done |
+| 12 | Post Feed Component | done |
+| 13 | Process Monitor Panel | done |
+| 14 | Subreddit Management Page | done |
 | 15 | Sentiment Score Display | not started |
 | 16 | Ticker Comparison | not started |
 | 17 | Subreddit Activity Heatmap | not started |

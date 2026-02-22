@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.config import DB_PATH, load_subreddits
 from app.database import get_db
+from app.process_manager import process_manager
 from sentinel.db import RedditDatabase
 
 router = APIRouter(prefix="/api")
@@ -37,7 +38,7 @@ def config(db: RedditDatabase = Depends(get_db)):
 
     return {
         "subreddits": subreddits,
-        "scraper_status": "stopped",
+        "process_count": len(process_manager.get_all_jobs()),
         "database_path": str(DB_PATH),
         "post_count": stats["posts"],
         "comment_count": stats["comments"],

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AreaChart, Area, ResponsiveContainer } from 'recharts'
-import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart } from 'react-icons/fi'
+import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart, FiArrowRight } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import './TrendingDashboard.css'
@@ -40,6 +40,17 @@ function TrendIcon({ trend }) {
   return <FiMinus className="trend-indicator flat" />
 }
 
+function SentimentBadge({ sentiment }) {
+  if (!sentiment) return null
+  const { label } = sentiment
+  const icon = label === 'bullish' ? <FiTrendingUp /> : label === 'bearish' ? <FiTrendingDown /> : <FiArrowRight />
+  return (
+    <span className={`sentiment-badge sentiment-${label}`}>
+      {icon} {label}
+    </span>
+  )
+}
+
 function TickerCard({ ticker, onClick }) {
   return (
     <div className="ticker-card" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
@@ -47,6 +58,7 @@ function TickerCard({ ticker, onClick }) {
         <span className="ticker-symbol">{ticker.ticker}</span>
         <TrendIcon trend={ticker.trend} />
       </div>
+      <SentimentBadge sentiment={ticker.sentiment} />
       <div className="ticker-card-mentions">{ticker.mention_count.toLocaleString()} mentions</div>
       <div className="ticker-card-sparkline">
         <SparklineChart data={ticker.sparkline} id={ticker.ticker} />
@@ -252,6 +264,7 @@ export default function TrendingDashboard() {
                 </th>
                 <th>Sparkline</th>
                 <th>Trend</th>
+                <th>Sentiment</th>
               </tr>
             </thead>
             <tbody>
@@ -271,6 +284,7 @@ export default function TrendingDashboard() {
                     <SparklineChart data={t.sparkline} id={`tbl-${t.ticker}`} />
                   </td>
                   <td><TrendIcon trend={t.trend} /></td>
+                  <td><SentimentBadge sentiment={t.sentiment} /></td>
                 </tr>
               ))}
             </tbody>

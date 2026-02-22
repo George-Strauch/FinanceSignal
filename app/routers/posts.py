@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
+from sentinel.sentiment import post_sentiment_label
 
 router = APIRouter(prefix="/api/posts")
 
@@ -27,6 +28,7 @@ SORT_COLUMNS = {
 def _post_summary(row, tickers: list[str]) -> dict:
     selftext = row["selftext"] or ""
     preview = (selftext[:200] + "...") if len(selftext) > 200 else selftext
+    upvote_ratio = row["upvote_ratio"]
     return {
         "id": row["id"],
         "title": row["title"],
@@ -34,8 +36,10 @@ def _post_summary(row, tickers: list[str]) -> dict:
         "author": row["author"],
         "subreddit": row["subreddit"],
         "score": row["score"],
+        "upvote_ratio": upvote_ratio,
         "num_comments": row["num_comments"],
         "created_utc": row["created_utc"],
+        "sentiment_label": post_sentiment_label(row["score"], upvote_ratio),
         "tickers_mentioned": tickers,
         "reddit_url": f"https://reddit.com/r/{row['subreddit']}/comments/{row['id']}",
     }
@@ -81,7 +85,7 @@ def list_posts(
     rows = db.conn.execute(
         f"""
         SELECT DISTINCT p.id, p.title, p.selftext, p.author, p.subreddit,
-               p.score, p.num_comments, p.created_utc
+               p.score, p.upvote_ratio, p.num_comments, p.created_utc
         FROM posts p {join} {where}
         ORDER BY {order}
         LIMIT ? OFFSET ?

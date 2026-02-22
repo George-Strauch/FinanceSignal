@@ -2,14 +2,17 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  ComposedChart, Line, Bar,
 } from 'recharts'
-import { FiArrowLeft } from 'react-icons/fi'
+import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
 import './TickerDetail.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d']
+const PRICE_RANGES = ['1D', '5D', '1M', '3M', '6M', '1Y']
+const RANGE_API_MAP = { '1D': '1d', '5D': '5d', '1M': '1mo', '3M': '3mo', '6M': '6mo', '1Y': '1y' }
 
 const PALETTE = [
   '99, 102, 241',   // indigo
@@ -43,6 +46,57 @@ function formatTimestamp(ts) {
   return ts.slice(5, 16)
 }
 
+function formatPrice(v) {
+  if (v == null) return '-'
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatVolume(v) {
+  if (v == null) return '-'
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
+  return v.toLocaleString()
+}
+
+function formatPriceTs(ts, range) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (range === '1D' || range === '5D') {
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** Merge price data with hourly mention data by timestamp key */
+function mergePriceMentions(prices, mentions, range) {
+  if (!mentions || mentions.length === 0) return prices
+
+  // Build a lookup: truncate mention timestamps to match price granularity
+  const mentionMap = new Map()
+  for (const m of mentions) {
+    mentionMap.set(m.t, m.v)
+  }
+
+  return prices.map(p => {
+    // For hourly data, truncate to hour to match mention buckets
+    const pDate = new Date(p.t)
+    let key
+    if (range === '1D' || range === '5D') {
+      key = `${pDate.getUTCFullYear()}-${String(pDate.getUTCMonth() + 1).padStart(2, '0')}-${String(pDate.getUTCDate()).padStart(2, '0')}T${String(pDate.getUTCHours()).padStart(2, '0')}:00:00`
+    } else {
+      // For daily data, sum all hourly mentions for that day
+      const dayKey = `${pDate.getUTCFullYear()}-${String(pDate.getUTCMonth() + 1).padStart(2, '0')}-${String(pDate.getUTCDate()).padStart(2, '0')}`
+      let sum = 0
+      for (const [mk, mv] of mentionMap) {
+        if (mk.startsWith(dayKey)) sum += mv
+      }
+      return { ...p, mentions: sum || null }
+    }
+    return { ...p, mentions: mentionMap.get(key) || null }
+  })
+}
+
 export default function TickerDetail() {
   const { ticker } = useParams()
   const navigate = useNavigate()
@@ -51,6 +105,17 @@ export default function TickerDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  // Price chart state
+  const [priceRange, setPriceRange] = usePersistedState('ticker-price-range', '1M')
+  const [priceData, setPriceData] = useState(null)
+  const [priceLoading, setPriceLoading] = useState(true)
+  const [marketInfo, setMarketInfo] = useState(null)
+  const [infoLoading, setInfoLoading] = useState(true)
+  const [mentionOverlay, setMentionOverlay] = usePersistedState('ticker-mention-overlay', false)
+  const [mentionData, setMentionData] = useState(null)
+  const [mentionLoading, setMentionLoading] = useState(false)
+
+  // Fetch Reddit mention detail
   const fetchDetail = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -64,11 +129,67 @@ export default function TickerDetail() {
     }
   }, [ticker, window])
 
+  // Fetch price chart
+  const fetchPriceChart = useCallback(async () => {
+    setPriceLoading(true)
+    try {
+      const rangeParam = RANGE_API_MAP[priceRange]
+      const res = await get(`/market/${ticker}/chart?range=${rangeParam}`)
+      setPriceData(res.prices)
+    } catch {
+      setPriceData(null)
+    } finally {
+      setPriceLoading(false)
+    }
+  }, [ticker, priceRange])
+
+  // Fetch market info
+  const fetchMarketInfo = useCallback(async () => {
+    setInfoLoading(true)
+    try {
+      const res = await get(`/market/${ticker}/info`)
+      setMarketInfo(res)
+    } catch {
+      setMarketInfo(null)
+    } finally {
+      setInfoLoading(false)
+    }
+  }, [ticker])
+
+  // Fetch hourly mentions for overlay
+  const fetchMentions = useCallback(async () => {
+    setMentionLoading(true)
+    try {
+      const rangeParam = RANGE_API_MAP[priceRange]
+      const res = await get(`/mentions/${ticker}/hourly?range=${rangeParam}`)
+      setMentionData(res.mentions)
+    } catch {
+      setMentionData(null)
+    } finally {
+      setMentionLoading(false)
+    }
+  }, [ticker, priceRange])
+
   useEffect(() => { fetchDetail() }, [fetchDetail])
+  useEffect(() => { fetchPriceChart() }, [fetchPriceChart])
+  useEffect(() => { fetchMarketInfo() }, [fetchMarketInfo])
+  useEffect(() => {
+    if (mentionOverlay) fetchMentions()
+  }, [mentionOverlay, fetchMentions])
 
   const subreddits = data ? Object.keys(data.mentions_by_subreddit) : []
   const chartData = data ? pivotChartData(data.mentions_over_time, subreddits) : []
   const topSubreddit = subreddits.length > 0 ? subreddits[0] : '-'
+
+  // Merged data for price chart with optional mention overlay
+  const mergedPriceData = priceData
+    ? (mentionOverlay && mentionData
+        ? mergePriceMentions(priceData, mentionData, priceRange)
+        : priceData)
+    : []
+
+  const priceChangePositive = marketInfo?.day_change != null && marketInfo.day_change >= 0
+  const yahooUrl = `https://finance.yahoo.com/quote/${ticker?.toUpperCase()}`
 
   return (
     <div className="ticker-detail">
@@ -77,7 +198,21 @@ export default function TickerDetail() {
           <FiArrowLeft />
         </button>
         <div className="td-title-group">
-          <h1 className="td-ticker">{ticker?.toUpperCase()}</h1>
+          <div className="td-title-row">
+            <h1 className="td-ticker">{ticker?.toUpperCase()}</h1>
+            {marketInfo?.name && (
+              <span className="td-company-name">{marketInfo.name}</span>
+            )}
+            <a
+              className="td-yahoo-link"
+              href={yahooUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View on Yahoo Finance"
+            >
+              <FiExternalLink /> Yahoo Finance
+            </a>
+          </div>
           {data && (
             <span className="td-mention-count">
               {data.total_mentions.toLocaleString()} mentions
@@ -99,9 +234,192 @@ export default function TickerDetail() {
 
       {error && <div className="td-error">Failed to load: {error}</div>}
 
-      {/* Stats Cards */}
+      {/* Market Info Cards */}
+      {(marketInfo || infoLoading) && (
+        <div className="td-market-info">
+          {infoLoading && !marketInfo ? (
+            <>
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="td-stat-card">
+                  <div className="skel-line" style={{ height: 28, width: '60%', margin: '0 auto 6px' }} />
+                  <div className="skel-line" style={{ height: 12, width: '50%', margin: '0 auto' }} />
+                </div>
+              ))}
+            </>
+          ) : marketInfo && (
+            <>
+              <div className="td-stat-card">
+                <div className="td-stat-value">
+                  {formatPrice(marketInfo.current_price)}
+                </div>
+                {marketInfo.day_change != null && (
+                  <div className={`td-price-change ${priceChangePositive ? 'positive' : 'negative'}`}>
+                    {priceChangePositive ? '+' : ''}{marketInfo.day_change} ({priceChangePositive ? '+' : ''}{marketInfo.day_change_pct}%)
+                  </div>
+                )}
+                <div className="td-stat-label">Current Price</div>
+              </div>
+              <div className="td-stat-card">
+                <div className="td-stat-value td-market-cap">
+                  {marketInfo.market_cap_fmt ?? '-'}
+                </div>
+                <div className="td-stat-label">Market Cap</div>
+              </div>
+              <div className="td-stat-card">
+                <div className="td-stat-value">{formatVolume(marketInfo.volume)}</div>
+                <div className="td-stat-label-detail">
+                  Vol / Avg {formatVolume(marketInfo.avg_volume)}
+                </div>
+              </div>
+              <div className="td-stat-card">
+                <div className="td-stat-value td-market-cap">
+                  {formatPrice(marketInfo.fifty_two_week_low)} — {formatPrice(marketInfo.fifty_two_week_high)}
+                </div>
+                <div className="td-stat-label">52-Week Range</div>
+              </div>
+              <div className="td-stat-card">
+                <div className="td-stat-value">
+                  {marketInfo.pe_ratio != null ? marketInfo.pe_ratio.toFixed(2) : '-'}
+                </div>
+                <div className="td-stat-label">P/E Ratio</div>
+              </div>
+              <div className="td-stat-card">
+                <div className="td-stat-value td-market-cap">
+                  {marketInfo.sector ?? '-'}
+                </div>
+                <div className="td-stat-label">Sector</div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Price Chart */}
+      <div className="td-price-section">
+        <div className="td-price-header">
+          <h2>Price Chart</h2>
+          <div className="td-price-controls">
+            <div className="td-window-selector">
+              {PRICE_RANGES.map((r) => (
+                <button
+                  key={r}
+                  className={`window-btn ${priceRange === r ? 'active' : ''}`}
+                  onClick={() => setPriceRange(r)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <button
+              className={`td-overlay-toggle ${mentionOverlay ? 'active' : ''}`}
+              onClick={() => setMentionOverlay(!mentionOverlay)}
+            >
+              {mentionOverlay ? 'Hide Mentions' : 'Show Mentions'}
+            </button>
+          </div>
+        </div>
+
+        {priceLoading && !priceData && (
+          <div className="td-chart-skeleton">
+            <div className="skel-line skel-chart-area" />
+          </div>
+        )}
+        {!priceLoading && (!priceData || priceData.length === 0) && (
+          <p className="td-no-data">No price data available for {ticker?.toUpperCase()}.</p>
+        )}
+        {priceData && priceData.length > 0 && (
+          <div className="td-chart">
+            <ResponsiveContainer width="100%" height={350}>
+              <ComposedChart data={mergedPriceData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
+                <XAxis
+                  dataKey="t"
+                  tickFormatter={(t) => formatPriceTs(t, priceRange)}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                  minTickGap={40}
+                />
+                <YAxis
+                  yAxisId="price"
+                  domain={['auto', 'auto']}
+                  tickFormatter={(v) => `$${v}`}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                />
+                {mentionOverlay && (
+                  <YAxis
+                    yAxisId="mentions"
+                    orientation="right"
+                    allowDecimals={false}
+                    tick={{ fill: 'rgba(var(--accent), 0.7)', fontSize: 11 }}
+                    stroke="rgba(var(--accent), 0.3)"
+                  />
+                )}
+                <Tooltip
+                  contentStyle={{
+                    background: 'rgb(var(--primary-color))',
+                    border: '1px solid rgba(var(--soft-border), var(--soft-border-alpha))',
+                    borderRadius: 8,
+                    fontSize: '0.82rem',
+                  }}
+                  labelFormatter={(t) => formatPriceTs(t, priceRange)}
+                  formatter={(value, name) => {
+                    if (name === 'mentions') return [value, 'Mentions']
+                    return [formatPrice(value), 'Price']
+                  }}
+                />
+                <Line
+                  yAxisId="price"
+                  type="monotone"
+                  dataKey="c"
+                  name="close"
+                  stroke="rgb(99, 102, 241)"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                {mentionOverlay && (
+                  <Bar
+                    yAxisId="mentions"
+                    dataKey="mentions"
+                    name="mentions"
+                    fill="rgba(var(--accent), 0.25)"
+                    stroke="rgba(var(--accent), 0.5)"
+                    isAnimationActive={false}
+                  />
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Mention Stats Cards */}
       {data && (
         <div className="td-stats">
+          {data.sentiment && (
+            <div className={`td-stat-card td-sentiment-card td-sentiment-${data.sentiment.label}`}>
+              <div className={`td-sentiment-score td-sentiment-score-${data.sentiment.label}`}>
+                {data.sentiment.label === 'bullish' && <FiTrendingUp />}
+                {data.sentiment.label === 'bearish' && <FiTrendingDown />}
+                {data.sentiment.label === 'neutral' && <FiArrowRight />}
+                {' '}{data.sentiment.score > 0 ? '+' : ''}{data.sentiment.score.toFixed(2)}
+              </div>
+              <div className="td-sentiment-label-text">{data.sentiment.label}</div>
+              <div className="td-stat-label">
+                Sentiment ({data.sentiment.confidence})
+              </div>
+              {data.sentiment.sources && Object.keys(data.sentiment.sources).length > 0 && (
+                <div className="td-sentiment-sources">
+                  {Object.entries(data.sentiment.sources).map(([src, count]) => (
+                    <span key={src} className="td-sentiment-source-chip">
+                      {src.replace('reddit_', 'r/')}: {count}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="td-stat-card">
             <div className="td-stat-value">{data.total_mentions.toLocaleString()}</div>
             <div className="td-stat-label">Total Mentions</div>
@@ -121,7 +439,7 @@ export default function TickerDetail() {
         </div>
       )}
 
-      {/* Chart */}
+      {/* Mentions Over Time Chart */}
       <div className="td-chart-section">
         <h2>Mentions Over Time</h2>
         {loading && !data && (

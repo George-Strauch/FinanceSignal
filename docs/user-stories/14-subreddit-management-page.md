@@ -2,7 +2,7 @@
 
 **Phase**: 6 — Subreddit Management UI
 **Dependencies**: 03, 07
-**Status**: not started
+**Status**: done
 
 ## Summary
 

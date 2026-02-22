@@ -1,0 +1,263 @@
+/* ── Subreddits Page ──────────────────────────────────────────── */
+
+.subreddits-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.subreddits-page h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+/* ── Stats Cards ─────────────────────────────────────────────── */
+
+.sub-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+/* ── Add Form ────────────────────────────────────────────────── */
+
+.sub-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sub-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.sub-add-input-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 320px;
+}
+
+.sub-add-prefix {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgb(var(--soft-text));
+  font-size: 0.88rem;
+  pointer-events: none;
+}
+
+.sub-add-input {
+  width: 100%;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 12px 8px 30px;
+  font-size: 0.88rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.sub-add-input:focus {
+  border-color: rgb(var(--accent));
+}
+
+.sub-add-input.invalid {
+  border-color: rgb(var(--color-error));
+}
+
+.sub-add-btn {
+  background: rgb(var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.sub-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sub-add-error {
+  font-size: 0.8rem;
+  color: rgb(var(--color-error));
+}
+
+/* ── Table ────────────────────────────────────────────────────── */
+
+.sub-table-wrap {
+  overflow-x: auto;
+}
+
+.sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.sub-table thead th {
+  text-align: left;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  white-space: nowrap;
+}
+
+.sub-table thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sub-table thead th.sortable:hover {
+  color: rgb(var(--accent));
+}
+
+.sub-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  color: rgb(var(--hard-text));
+}
+
+.sub-name-cell {
+  font-weight: 600;
+}
+
+.sub-status-active {
+  color: rgb(var(--color-success));
+  font-weight: 500;
+  font-size: 0.82rem;
+}
+
+.sub-status-inactive {
+  color: rgb(var(--soft-text));
+  font-size: 0.82rem;
+}
+
+.sub-remove-btn {
+  background: transparent;
+  border: 1px solid rgba(var(--color-error), 0.4);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  color: rgb(var(--color-error));
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sub-remove-btn:hover {
+  background: rgba(var(--color-error), 0.1);
+  border-color: rgb(var(--color-error));
+}
+
+.sub-remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Confirm Overlay ─────────────────────────────────────────── */
+
+.sub-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sub-confirm-dialog {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+}
+
+.sub-confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: rgb(var(--hard-text));
+}
+
+.sub-confirm-dialog p {
+  margin: 0 0 20px;
+  font-size: 0.88rem;
+  color: rgb(var(--soft-text));
+  line-height: 1.5;
+}
+
+.sub-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.sub-confirm-cancel {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  cursor: pointer;
+}
+
+.sub-confirm-delete {
+  background: rgb(var(--color-error));
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+
+.sub-confirm-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Loading / Error ─────────────────────────────────────────── */
+
+.sub-error {
+  background: rgba(var(--color-error), 0.1);
+  border: 1px solid rgba(var(--color-error), 0.3);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: rgb(var(--color-error));
+  font-size: 0.88rem;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .sub-add-row {
+    flex-direction: column;
+  }
+
+  .sub-add-input-wrap {
+    max-width: 100%;
+  }
+
+  .sub-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}

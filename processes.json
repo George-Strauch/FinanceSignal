@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "id": "reddit_scraper",
+      "name": "Reddit Scraper",
+      "description": "Fetches posts and comments from configured subreddits, extracts ticker mentions",
+      "module": "app.scraper",
+      "function": "run_collector",
+      "type": "continuous",
+      "auto_start": false
+    },
+    {
+      "id": "ticker_reprocess",
+      "name": "Ticker Reprocess",
+      "description": "Re-extract tickers from all posts and comments (one-time cleanup)",
+      "module": "app.scraper",
+      "function": "reprocess_all_tickers",
+      "type": "oneshot",
+      "auto_start": false
+    }
+  ]
+}

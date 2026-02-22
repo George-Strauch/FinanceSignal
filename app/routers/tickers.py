@@ -6,6 +6,11 @@ from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
+from sentinel.sentiment import (
+    compute_sentiment,
+    signals_from_reddit_comments,
+    signals_from_reddit_posts,
+)
 
 router = APIRouter(prefix="/api/tickers")
 
@@ -51,6 +56,70 @@ def _ensure_indexes(db: RedditDatabase):
         "CREATE INDEX IF NOT EXISTS idx_ticker_mentions_created "
         "ON ticker_mentions(created_utc)"
     )
+
+
+def _sentiment_result_dict(result) -> dict:
+    return {
+        "score": result.score,
+        "label": result.label,
+        "signal_count": result.signal_count,
+        "sources": result.sources,
+        "confidence": result.confidence,
+    }
+
+
+def _compute_batch_sentiment(db: RedditDatabase, tickers: list[str], cutoff: float) -> dict[str, dict]:
+    """Compute sentiment for multiple tickers in 2 SQL queries."""
+    if not tickers:
+        return {}
+
+    placeholders = ",".join("?" * len(tickers))
+
+    # Posts: JOIN ticker_mentions → posts to get score + upvote_ratio
+    post_rows = db.conn.execute(
+        f"""
+        SELECT tm.ticker, p.id, p.score, p.upvote_ratio, p.total_awards_received
+        FROM ticker_mentions tm
+        JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+        WHERE tm.ticker IN ({placeholders}) AND tm.created_utc >= ?
+        """,
+        [*tickers, cutoff],
+    ).fetchall()
+
+    # Comments: JOIN ticker_mentions → comments to get score + controversiality
+    comment_rows = db.conn.execute(
+        f"""
+        SELECT tm.ticker, c.id, c.score, c.controversiality
+        FROM ticker_mentions tm
+        JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+        WHERE tm.ticker IN ({placeholders}) AND tm.created_utc >= ?
+        """,
+        [*tickers, cutoff],
+    ).fetchall()
+
+    # Group by ticker
+    posts_by_ticker: dict[str, list[dict]] = {t: [] for t in tickers}
+    comments_by_ticker: dict[str, list[dict]] = {t: [] for t in tickers}
+
+    for r in post_rows:
+        posts_by_ticker.setdefault(r["ticker"], []).append(dict(r))
+    for r in comment_rows:
+        comments_by_ticker.setdefault(r["ticker"], []).append(dict(r))
+
+    result = {}
+    for t in tickers:
+        signals = signals_from_reddit_posts(posts_by_ticker.get(t, []))
+        signals += signals_from_reddit_comments(comments_by_ticker.get(t, []))
+        result[t] = _sentiment_result_dict(compute_sentiment(signals))
+
+    return result
+
+
+def _compute_ticker_sentiment(db: RedditDatabase, ticker: str, cutoff: float) -> dict:
+    """Compute sentiment for a single ticker."""
+    return _compute_batch_sentiment(db, [ticker], cutoff).get(ticker, _sentiment_result_dict(
+        compute_sentiment([])
+    ))
 
 
 @router.get("/search")
@@ -138,6 +207,9 @@ def trending_tickers(
                 {"t": sr["bucket"], "v": sr["count"]}
             )
 
+    # Batch sentiment for all tickers
+    sentiment_map = _compute_batch_sentiment(db, tickers_in_result, cutoff)
+
     def _compute_trend(points: list[dict]) -> str:
         """Compare first-half vs second-half mention sums."""
         if len(points) < 2:
@@ -170,6 +242,7 @@ def trending_tickers(
                 "latest_mention": ts(r["latest_mention"]),
                 "sparkline": sparkline_map.get(r["ticker"], []),
                 "trend": _compute_trend(sparkline_map.get(r["ticker"], [])),
+                "sentiment": sentiment_map.get(r["ticker"], {"score": 0, "label": "neutral", "signal_count": 0, "sources": {}, "confidence": "low"}),
             }
             for r in rows
         ],
@@ -226,11 +299,14 @@ def ticker_detail(
         (ticker_upper, cutoff),
     ).fetchall()
 
+    sentiment = _compute_ticker_sentiment(db, ticker_upper, cutoff)
+
     return {
         "ticker": ticker_upper,
         "window": window.value,
         "total_mentions": total,
         "unique_posts": unique_posts,
+        "sentiment": sentiment,
         "mentions_by_subreddit": {r["subreddit"]: r["cnt"] for r in by_sub},
         "mentions_over_time": [dict(r) for r in over_time],
     }

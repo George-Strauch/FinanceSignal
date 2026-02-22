@@ -68,3 +68,7 @@ Run the continuous collector as a FastAPI background task using lifespan events.
 - `RedditFetcher` uses synchronous `requests` — run in a thread executor (`asyncio.to_thread`) to avoid blocking the event loop.
 - The `docs/todo/continuous_collector.md` describes the 3-hour interval daemon design in detail.
 - Consider making the collector modular so additional scrapers/data sources can be added later (story 13 needs this).
+
+## Update — Process Manager Migration
+
+The scraper background task now runs via the generic **Process Manager** (`app/process_manager.py`). Jobs are registered in `processes.json` and started/stopped through `/api/processes/{job_id}/start|stop`. The scraper-specific `ScraperState` is created by the process manager and passed to `run_collector`. The old `/api/scraper/*` endpoints have been replaced by `/api/processes/*`.

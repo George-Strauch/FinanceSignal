@@ -70,6 +70,9 @@ export default function PostCard({ post, highlightTicker }) {
         >
           r/{post.subreddit}
         </span>
+        {post.sentiment_label && post.sentiment_label !== 'neutral' && (
+          <span className={`post-card-sentiment-dot sentiment-dot-${post.sentiment_label}`} title={post.sentiment_label} />
+        )}
         <span className="post-card-author">u/{post.author}</span>
         <span className="post-card-stat">
           <FiArrowUp /> {post.score}

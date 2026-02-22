@@ -7,7 +7,7 @@ const NAV_ITEMS = [
   { to: '/', icon: FiBarChart2, label: 'Trending' },
   { to: '/tickers', icon: FiTrendingUp, label: 'Tickers' },
   { to: '/subreddits', icon: FiList, label: 'Subreddits' },
-  { to: '/scraper', icon: FiActivity, label: 'Scraper Monitor' },
+  { to: '/processes', icon: FiActivity, label: 'Process Monitor' },
   { to: '/system', icon: FiServer, label: 'System Status' },
 ]
 
