@@ -1,6 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import TrendingDashboard from './pages/TrendingDashboard'
+import Tickers from './pages/Tickers'
+import TickerDetail from './pages/TickerDetail'
 import SystemStatus from './pages/SystemStatus'
 
 function Subreddits() {
@@ -16,7 +18,8 @@ function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<TrendingDashboard />} />
-        <Route path="/tickers/:ticker" element={<div>Ticker Detail (Story 11)</div>} />
+        <Route path="/tickers" element={<Tickers />} />
+        <Route path="/tickers/:ticker" element={<TickerDetail />} />
         <Route path="/subreddits" element={<Subreddits />} />
         <Route path="/scraper" element={<ScraperMonitor />} />
         <Route path="/system" element={<SystemStatus />} />

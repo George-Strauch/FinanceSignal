@@ -187,11 +187,17 @@ def ticker_detail(
     ticker_upper = ticker.upper()
     bucket_fmt = _bucket_format(window.value)
 
-    # Total mentions
-    total = db.conn.execute(
-        "SELECT COUNT(*) AS cnt FROM ticker_mentions WHERE ticker = ? AND created_utc >= ?",
+    # Total mentions + unique posts
+    agg = db.conn.execute(
+        """
+        SELECT COUNT(*) AS cnt,
+               COUNT(DISTINCT CASE WHEN source_type = 'post' THEN source_id END) AS unique_posts
+        FROM ticker_mentions WHERE ticker = ? AND created_utc >= ?
+        """,
         (ticker_upper, cutoff),
-    ).fetchone()["cnt"]
+    ).fetchone()
+    total = agg["cnt"]
+    unique_posts = agg["unique_posts"]
 
     # By subreddit
     by_sub = db.conn.execute(
@@ -224,6 +230,7 @@ def ticker_detail(
         "ticker": ticker_upper,
         "window": window.value,
         "total_mentions": total,
+        "unique_posts": unique_posts,
         "mentions_by_subreddit": {r["subreddit"]: r["cnt"] for r in by_sub},
         "mentions_over_time": [dict(r) for r in over_time],
     }

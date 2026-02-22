@@ -1,0 +1,119 @@
+/* ── Tickers Page ─────────────────────────────────────────────── */
+
+.tickers-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tickers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tickers-header h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.tickers-search-wrap {
+  position: relative;
+  width: 280px;
+  max-width: 100%;
+}
+
+.tickers-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgb(var(--soft-text));
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+
+.tickers-search {
+  width: 100%;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 12px 8px 32px;
+  font-size: 0.88rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.tickers-search:focus {
+  border-color: rgb(var(--accent));
+}
+
+.tickers-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+}
+
+.tickers-empty,
+.tickers-loading {
+  color: rgb(var(--soft-text));
+  font-size: 0.88rem;
+  text-align: center;
+  padding: 40px 0;
+}
+
+.tickers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tickers-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tickers-row:hover {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 1px 8px rgba(var(--accent), 0.1);
+}
+
+.tickers-row-symbol {
+  font-size: 1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+}
+
+.tickers-row-count {
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 767px) {
+  .tickers-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tickers-search-wrap {
+    width: 100%;
+  }
+}
