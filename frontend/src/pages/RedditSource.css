@@ -1,16 +1,42 @@
-/* ── Subreddits Page ──────────────────────────────────────────── */
+/* ── Reddit Source Page ───────────────────────────────────────── */
 
-.subreddits-page {
+.reddit-source {
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.subreddits-page h1 {
+.reddit-source h1 {
   font-size: 1.3rem;
   font-weight: 700;
   color: rgb(var(--hard-text));
   margin: 0;
+}
+
+/* ── Breadcrumb ──────────────────────────────────────────────── */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+}
+
+.breadcrumb-link {
+  color: rgb(var(--accent));
+  text-decoration: none;
+}
+
+.breadcrumb-link:hover {
+  text-decoration: underline;
+}
+
+.breadcrumb-sep {
+  color: rgb(var(--soft-text));
+}
+
+.breadcrumb-current {
+  color: rgb(var(--soft-text));
 }
 
 /* ── Stats Cards ─────────────────────────────────────────────── */

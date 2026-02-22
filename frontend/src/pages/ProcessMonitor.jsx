@@ -38,7 +38,9 @@ export default function ProcessMonitor() {
   const [sortKey, setSortKey] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
   const [actionLoading, setActionLoading] = useState(null)
+  const [paramValues, setParamValues] = useState({})
   const logRef = useRef(null)
+  const prevSelectedRef = useRef(null)
 
   // Fetch job list
   const fetchJobs = useCallback(async () => {
@@ -89,6 +91,26 @@ export default function ProcessMonitor() {
     return () => clearInterval(id)
   }, [selectedJobId, fetchDetail])
 
+  // Initialize param values when selecting a job
+  useEffect(() => {
+    if (selectedJobId && selectedJobId !== prevSelectedRef.current) {
+      const job = jobs.find((j) => j.id === selectedJobId)
+      if (job) {
+        // Use current_params if available (reflects running/last-run values), else defaults
+        if (job.current_params && Object.keys(job.current_params).length > 0) {
+          setParamValues({ ...job.current_params })
+        } else {
+          const defaults = {}
+          for (const p of job.params || []) {
+            defaults[p.key] = p.default
+          }
+          setParamValues(defaults)
+        }
+      }
+    }
+    prevSelectedRef.current = selectedJobId
+  }, [selectedJobId, jobs])
+
   // Auto-scroll logs
   useEffect(() => {
     if (autoScroll && logRef.current) {
@@ -96,11 +118,13 @@ export default function ProcessMonitor() {
     }
   }, [logs, autoScroll])
 
-  const handleAction = async (jobId, action, e) => {
-    e.stopPropagation()
+  const handleAction = async (jobId, action) => {
     setActionLoading(`${jobId}-${action}`)
     try {
-      await post(`/processes/${jobId}/${action}`)
+      const body = (action === 'start' || action === 'restart')
+        ? { params: paramValues }
+        : undefined
+      await post(`/processes/${jobId}/${action}`, body)
       await fetchJobs()
       if (selectedJobId === jobId) {
         await fetchDetail(jobId)
@@ -110,6 +134,10 @@ export default function ProcessMonitor() {
     } finally {
       setActionLoading(null)
     }
+  }
+
+  const handleParamChange = (key, value) => {
+    setParamValues((prev) => ({ ...prev, [key]: value }))
   }
 
   const handleSort = (key) => {
@@ -127,6 +155,75 @@ export default function ProcessMonitor() {
   }
 
   const runningCount = jobs.filter((j) => j.running).length
+  const selectedJob = jobs.find((j) => j.id === selectedJobId)
+
+  // Action buttons for detail panel
+  const renderDetailActions = () => {
+    if (!selectedJob) return null
+    return (
+      <div className="detail-actions-header">
+        <h2>{selectedJob.name}</h2>
+        <div className="detail-actions">
+          {!selectedJob.running && (
+            <button
+              className="job-action-btn"
+              onClick={() => handleAction(selectedJob.id, 'start')}
+              disabled={actionLoading === `${selectedJob.id}-start`}
+            >
+              <FiPlay size={12} /> Start
+            </button>
+          )}
+          {selectedJob.running && (
+            <button
+              className="job-action-btn stop"
+              onClick={() => handleAction(selectedJob.id, 'stop')}
+              disabled={actionLoading === `${selectedJob.id}-stop`}
+            >
+              <FiSquare size={12} /> Stop
+            </button>
+          )}
+          <button
+            className="job-action-btn"
+            onClick={() => handleAction(selectedJob.id, 'restart')}
+            disabled={actionLoading === `${selectedJob.id}-restart`}
+          >
+            <FiRefreshCw size={12} /> Restart
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Parameter inputs form
+  const renderParamInputs = () => {
+    if (!selectedJob?.params?.length) return null
+    return (
+      <div className="dash-card">
+        <h2>Parameters</h2>
+        <div className="param-inputs-grid">
+          {selectedJob.params.map((p) => (
+            <div key={p.key} className="param-field">
+              <label className="param-label">
+                {p.label}
+                {p.unit && <span className="param-unit">({p.unit})</span>}
+              </label>
+              <input
+                className="param-input"
+                type="number"
+                value={paramValues[p.key] ?? p.default}
+                min={p.min}
+                max={p.max}
+                step={p.step}
+                disabled={selectedJob.running}
+                onChange={(e) => handleParamChange(p.key, parseFloat(e.target.value))}
+              />
+              {p.description && <span className="param-description">{p.description}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   // Scraper detail rendering
   const renderScraperDetail = () => {
@@ -298,33 +395,6 @@ export default function ProcessMonitor() {
             <div className="job-card-meta">
               <span className="job-type-badge">{job.type}</span>
             </div>
-            <div className="job-card-actions">
-              {!job.running && (
-                <button
-                  className="job-action-btn"
-                  onClick={(e) => handleAction(job.id, 'start', e)}
-                  disabled={actionLoading === `${job.id}-start`}
-                >
-                  <FiPlay size={12} /> Start
-                </button>
-              )}
-              {job.running && (
-                <button
-                  className="job-action-btn stop"
-                  onClick={(e) => handleAction(job.id, 'stop', e)}
-                  disabled={actionLoading === `${job.id}-stop`}
-                >
-                  <FiSquare size={12} /> Stop
-                </button>
-              )}
-              <button
-                className="job-action-btn"
-                onClick={(e) => handleAction(job.id, 'restart', e)}
-                disabled={actionLoading === `${job.id}-restart`}
-              >
-                <FiRefreshCw size={12} /> Restart
-              </button>
-            </div>
           </div>
         ))}
       </div>
@@ -332,6 +402,8 @@ export default function ProcessMonitor() {
       {/* Detail Panel */}
       {selectedJobId && jobDetail && (
         <div className="job-detail-panel">
+          {renderDetailActions()}
+          {renderParamInputs()}
           {jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
 
           {/* Log Viewer */}

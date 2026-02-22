@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { get } from '../api/client'
 import './SystemStatus.css'
 
@@ -85,15 +86,20 @@ export default function SystemStatus() {
         )}
       </div>
 
-      {/* Subreddits */}
+      {/* Data Sources */}
       <div className="dash-card">
-        <h2>Subreddits</h2>
-        {config?.subreddits?.length ? (
-          <ul className="subreddit-list">
-            {config.subreddits.map((sub) => (
-              <li key={sub} className="subreddit-chip">r/{sub}</li>
-            ))}
-          </ul>
+        <h2>Data Sources</h2>
+        {config ? (
+          <div className="data-sources-summary">
+            <div className="data-source-row">
+              <span className="data-source-name">Reddit</span>
+              <span className="data-source-detail">
+                {config.subreddits?.length ?? 0} subreddits
+              </span>
+              <span className="source-status-dot active" />
+            </div>
+            <Link to="/sources" className="data-sources-link">Manage sources</Link>
+          </div>
         ) : (
           <p className="dash-placeholder">{error ? 'Unavailable' : 'Loading\u2026'}</p>
         )}

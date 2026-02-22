@@ -4,11 +4,16 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.process_manager import process_manager
 from sentinel.config import load_subreddits
 from sentinel.db import RedditDatabase
+
+
+class StartJobRequest(BaseModel):
+    params: dict | None = None
 
 router = APIRouter(prefix="/api/processes")
 
@@ -31,6 +36,8 @@ def _job_summary(proc) -> dict:
         "started_at": _ts(proc.started_at),
         "completed_at": _ts(proc.completed_at),
         "error": proc.error,
+        "params": proc.param_definitions,
+        "current_params": proc.current_params,
     }
 
 
@@ -110,9 +117,10 @@ async def get_process(job_id: str, db: RedditDatabase = Depends(get_db)):
 
 
 @router.post("/{job_id}/start")
-async def start_process(job_id: str):
-    """Start a registered job."""
-    result = await process_manager.start_job(job_id)
+async def start_process(job_id: str, body: StartJobRequest | None = None):
+    """Start a registered job with optional parameter overrides."""
+    params = body.params if body else None
+    result = await process_manager.start_job(job_id, params=params)
     if result["status"] == "not_found":
         raise HTTPException(status_code=404, detail=result["message"])
     return result
@@ -128,9 +136,10 @@ async def stop_process(job_id: str):
 
 
 @router.post("/{job_id}/restart")
-async def restart_process(job_id: str):
-    """Stop then start a job."""
-    result = await process_manager.restart_job(job_id)
+async def restart_process(job_id: str, body: StartJobRequest | None = None):
+    """Stop then start a job with optional parameter overrides."""
+    params = body.params if body else None
+    result = await process_manager.restart_job(job_id, params=params)
     if result["status"] == "not_found":
         raise HTTPException(status_code=404, detail=result["message"])
     return result

@@ -30,6 +30,9 @@ class ProcessState:
     log_buffer: deque = field(default_factory=lambda: deque(maxlen=100))
     _task: asyncio.Task | None = field(default=None, repr=False)
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    # Parameter definitions from processes.json and current runtime values
+    param_definitions: list[dict] = field(default_factory=list)
+    current_params: dict = field(default_factory=dict)
     # Holds the job-specific state object (e.g. ScraperState for reddit_scraper)
     job_state: object = field(default=None, repr=False)
 
@@ -65,6 +68,8 @@ class ProcessManager:
 
         for job in data.get("jobs", []):
             job_id = job["id"]
+            param_defs = job.get("params", [])
+            default_params = {p["key"]: p["default"] for p in param_defs}
             state = ProcessState(
                 id=job_id,
                 name=job["name"],
@@ -73,6 +78,8 @@ class ProcessManager:
                 module=job["module"],
                 function=job["function"],
                 auto_start=job.get("auto_start", False),
+                param_definitions=param_defs,
+                current_params=default_params,
             )
             self._processes[job_id] = state
 
@@ -83,8 +90,8 @@ class ProcessManager:
 
         logger.info("Loaded %d jobs from processes.json", len(self._processes))
 
-    async def start_job(self, job_id: str) -> dict:
-        """Start a registered job."""
+    async def start_job(self, job_id: str, params: dict | None = None) -> dict:
+        """Start a registered job with optional parameter overrides."""
         proc = self._processes.get(job_id)
         if proc is None:
             return {"status": "not_found", "message": f"Unknown job: {job_id}"}
@@ -97,6 +104,15 @@ class ProcessManager:
             func = getattr(mod, proc.function)
         except (ImportError, AttributeError) as exc:
             return {"status": "error", "message": str(exc)}
+
+        # Merge user params over defaults (only accept declared keys)
+        declared_keys = {p["key"] for p in proc.param_definitions}
+        merged = {p["key"]: p["default"] for p in proc.param_definitions}
+        if params:
+            for k, v in params.items():
+                if k in declared_keys:
+                    merged[k] = v
+        proc.current_params = merged
 
         proc.running = True
         proc.error = None
@@ -139,15 +155,15 @@ class ProcessManager:
         proc.running = False
         return {"status": "stopped"}
 
-    async def restart_job(self, job_id: str) -> dict:
-        """Stop then start a job."""
+    async def restart_job(self, job_id: str, params: dict | None = None) -> dict:
+        """Stop then start a job with optional parameter overrides."""
         proc = self._processes.get(job_id)
         if proc is None:
             return {"status": "not_found", "message": f"Unknown job: {job_id}"}
 
         if proc.running:
             await self.stop_job(job_id)
-        return await self.start_job(job_id)
+        return await self.start_job(job_id, params=params)
 
     def get_job(self, job_id: str) -> ProcessState | None:
         return self._processes.get(job_id)
@@ -195,9 +211,14 @@ class ProcessManager:
         """Create job-specific state objects based on the job id."""
         if proc.id == "reddit_scraper":
             from app.scraper import ScraperState
+            params = proc.current_params
             state = ScraperState()
             state._stop_event = proc._stop_event
             state.log_buffer = proc.log_buffer
+            if "cycle_interval_hours" in params:
+                state.interval_seconds = int(float(params["cycle_interval_hours"]) * 3600)
+            if "request_delay_seconds" in params:
+                state.request_delay = float(params["request_delay_seconds"])
             return state
         return None
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { get, post, del } from '../api/client'
-import './Subreddits.css'
+import './RedditSource.css'
 
 const NAME_RE = /^[A-Za-z0-9_]{1,21}$/
 
@@ -19,7 +20,7 @@ function formatTime(iso) {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-export default function Subreddits() {
+export default function RedditSource() {
   const [subreddits, setSubreddits] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -93,7 +94,7 @@ export default function Subreddits() {
 
   const sortIndicator = (key) => {
     if (sortKey !== key) return ''
-    return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
   }
 
   const sorted = [...subreddits].sort((a, b) => {
@@ -119,8 +120,14 @@ export default function Subreddits() {
   const nameValid = newName.trim() === '' || NAME_RE.test(newName.trim())
 
   return (
-    <div className="subreddits-page">
-      <h1>Subreddits</h1>
+    <div className="reddit-source">
+      <nav className="breadcrumb">
+        <Link to="/sources" className="breadcrumb-link">Sources</Link>
+        <span className="breadcrumb-sep">/</span>
+        <span className="breadcrumb-current">Reddit</span>
+      </nav>
+
+      <h1>Reddit Subreddits</h1>
 
       {/* Stats */}
       <div className="sub-stats-grid">

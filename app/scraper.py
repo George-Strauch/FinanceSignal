@@ -33,6 +33,7 @@ class ScraperState:
     last_completed_cycle: float | None = None
     errors_this_cycle: int = 0
     interval_seconds: int = 10800  # 3 hours
+    request_delay: float = 6.0  # seconds between Reddit API requests
     # Monitoring fields
     started_at: float | None = None
     total_cycles_completed: int = 0
@@ -121,7 +122,7 @@ async def run_collector(state: ScraperState):
 
 def _fetch_subreddit(subreddit: str, state: ScraperState):
     """Fetch one page of new posts for a subreddit (runs in thread)."""
-    fetcher = RedditFetcher()
+    fetcher = RedditFetcher(min_interval=state.request_delay)
     fetch_start = time.time()
     total_new = 0
     total_updated = 0

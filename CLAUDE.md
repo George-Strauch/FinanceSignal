@@ -9,10 +9,13 @@ FinanceSignal is a Reddit financial sentiment collection and analysis system bei
 ```
 FinanceSignal/
 ├── src/sentinel/          # Core Python package (config, db, fetcher, tickers)
-├── scripts/               # CLI scripts (fetch_new, backfill, process, stats)
-├── app/                   # FastAPI backend (planned)
-├── frontend/              # React frontend (planned)
+├── app/                   # FastAPI backend
+│   ├── routers/           # API route modules (posts, tickers, processes, etc.)
+│   ├── process_manager.py # Generic background job runner (see docs/process-manager.md)
+│   └── scraper.py         # Reddit scraper job implementation
+├── frontend/              # React frontend (Vite)
 ├── docs/                  # Documentation and user stories
+├── processes.json         # Background job registry (see docs/process-manager.md)
 ├── subreddits.json        # Configured subreddit list
 ├── reddit_data.db         # SQLite database (~1 GB)
 ├── requirements.txt       # Python dependencies
@@ -27,6 +30,10 @@ FinanceSignal/
 | `db.py`      | SQLite ORM-lite layer (WAL mode, upsert, stats)  |
 | `fetcher.py` | Reddit public JSON API client with rate limiting |
 | `tickers.py` | Regex-based ticker extraction with noise filter  |
+
+### Process Manager (`app/process_manager.py`)
+
+A generic system for running and monitoring background jobs. Jobs are declared in `processes.json` with a module/function path, type (`continuous` or `oneshot`), and optional auto-start. The manager handles dynamic import, asyncio task lifecycle, per-process log capture (ring buffer), and stop signaling. REST API at `/api/processes/*` provides status, control, and logs. See `docs/process-manager.md` for full documentation on architecture and how to add new processes.
 
 ### Database Schema (SQLite)
 

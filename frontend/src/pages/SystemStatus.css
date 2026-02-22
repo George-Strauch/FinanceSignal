@@ -93,22 +93,51 @@
   margin-top: 4px;
 }
 
-/* ── Subreddit List ────────────────────────────────────────────── */
+/* ── Data Sources ─────────────────────────────────────────────── */
 
-.subreddit-list {
+.data-sources-summary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.subreddit-chip {
-  background: rgb(var(--secondary-color));
-  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 0.82rem;
+.data-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.data-source-name {
+  font-weight: 600;
+  font-size: 0.92rem;
   color: rgb(var(--hard-text));
+}
+
+.data-source-detail {
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+}
+
+.source-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+
+.source-status-dot.active {
+  background: rgb(var(--color-success));
+  box-shadow: 0 0 5px rgba(var(--color-success), 0.4);
+}
+
+.data-sources-link {
+  font-size: 0.82rem;
+  color: rgb(var(--accent));
+  text-decoration: none;
+}
+
+.data-sources-link:hover {
+  text-decoration: underline;
 }
 
 /* ── Loading / Error states ────────────────────────────────────── */

@@ -11,12 +11,13 @@ from sentinel.config import MIN_REQUEST_INTERVAL, MAX_RETRIES, USER_AGENT
 class RedditFetcher:
     BASE_URL = "https://www.reddit.com"
 
-    def __init__(self):
+    def __init__(self, min_interval=None):
         self.time_window = "day"
         self.headers = {"User-Agent": USER_AGENT}
         self._last_request_time = 0.0
         self._rate_remaining = None
         self._rate_reset = None
+        self._min_interval = min_interval if min_interval is not None else MIN_REQUEST_INTERVAL
 
     # ── Public fetch methods ───────────────────────────────────────────
 
@@ -161,8 +162,8 @@ class RedditFetcher:
                 time.sleep(wait)
                 return
         elapsed = now - self._last_request_time
-        if elapsed < MIN_REQUEST_INTERVAL:
-            time.sleep(MIN_REQUEST_INTERVAL - elapsed)
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
 
     def _parse_rate_headers(self, resp):
         remaining = resp.headers.get("x-ratelimit-remaining")
@@ -191,7 +192,7 @@ class RedditFetcher:
                 if retry_after:
                     wait = float(retry_after)
                 else:
-                    wait = MIN_REQUEST_INTERVAL * (2 ** (attempt - 1))
+                    wait = self._min_interval * (2 ** (attempt - 1))
                 print(f"     [429] Rate limited. Retry {attempt}/{MAX_RETRIES} after {wait:.1f}s")
                 time.sleep(wait)
                 continue

@@ -1,0 +1,113 @@
+/* ── Sources Page ─────────────────────────────────────────────── */
+
+.sources-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sources-page h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+/* ── Source Cards Grid ────────────────────────────────────────── */
+
+.sources-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.source-card {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.source-card:hover {
+  border-color: rgb(var(--accent));
+  box-shadow: 0 0 0 1px rgb(var(--accent));
+}
+
+/* ── Card Header ──────────────────────────────────────────────── */
+
+.source-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.source-card-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 7px;
+  background: rgba(var(--accent), 0.12);
+  border-radius: 8px;
+  color: rgb(var(--accent));
+}
+
+.source-card-name {
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: rgb(var(--hard-text)) !important;
+  margin-bottom: 4px !important;
+}
+
+.source-card-desc {
+  font-size: 0.84rem;
+  color: rgb(var(--soft-text));
+  margin: 0;
+  line-height: 1.4;
+}
+
+/* ── Card Stats ───────────────────────────────────────────────── */
+
+.source-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+}
+
+.source-card-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgb(var(--soft-text));
+}
+
+/* ── Card Footer ──────────────────────────────────────────────── */
+
+.source-card-footer {
+  display: flex;
+  align-items: center;
+}
+
+.source-status-badge {
+  font-size: 0.76rem;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+.source-status-badge.active {
+  background: rgba(var(--color-success), 0.12);
+  color: rgb(var(--color-success));
+}
+
+/* ── Responsive ───────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .sources-grid {
+    grid-template-columns: 1fr;
+  }
+}

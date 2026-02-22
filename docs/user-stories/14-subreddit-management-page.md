@@ -11,7 +11,7 @@ Build a frontend page to view, add, and remove subreddits. Shows per-subreddit p
 ## Requirements
 
 ### Page Route
-`/subreddits`
+`/sources/reddit` (under the Sources section)
 
 ### Subreddit List
 - Table or card grid showing each subreddit:

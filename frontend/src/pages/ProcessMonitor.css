@@ -94,7 +94,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
 }
 
 .job-type-badge {
@@ -105,11 +104,6 @@
   padding: 2px 8px;
   border-radius: 10px;
   text-transform: uppercase;
-}
-
-.job-card-actions {
-  display: flex;
-  gap: 6px;
 }
 
 .job-action-btn {
@@ -153,6 +147,81 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* ── Detail Actions Header ──────────────────────────────────── */
+
+.detail-actions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.detail-actions-header h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Parameter Inputs ───────────────────────────────────────── */
+
+.param-inputs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.param-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.param-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+}
+
+.param-unit {
+  font-weight: 400;
+  color: rgb(var(--soft-text));
+  margin-left: 4px;
+}
+
+.param-input {
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.88rem;
+  color: rgb(var(--hard-text));
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+.param-input:focus {
+  outline: none;
+  border-color: rgb(var(--accent));
+}
+
+.param-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.param-description {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  line-height: 1.3;
 }
 
 /* ── Scraper Stats ───────────────────────────────────────────── */
