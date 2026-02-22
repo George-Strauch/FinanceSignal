@@ -104,6 +104,7 @@ def trending_tickers(
     # Collect subreddits per ticker in one pass
     tickers_in_result = [r["ticker"] for r in rows]
     sub_map: dict[str, list[str]] = {}
+    sparkline_map: dict[str, list[dict]] = {}
     if tickers_in_result:
         placeholders = ",".join("?" * len(tickers_in_result))
         sub_rows = db.conn.execute(
@@ -117,6 +118,38 @@ def trending_tickers(
         ).fetchall()
         for sr in sub_rows:
             sub_map.setdefault(sr["ticker"], []).append(sr["subreddit"])
+
+        # Sparkline: time-bucketed mention counts per ticker
+        bucket_fmt = _bucket_format(window.value)
+        spark_rows = db.conn.execute(
+            f"""
+            SELECT ticker,
+                   strftime('{bucket_fmt}', created_utc, 'unixepoch') AS bucket,
+                   COUNT(*) AS count
+            FROM ticker_mentions
+            WHERE created_utc >= ? AND ticker IN ({placeholders})
+            GROUP BY ticker, bucket
+            ORDER BY ticker, bucket
+            """,
+            [cutoff, *tickers_in_result],
+        ).fetchall()
+        for sr in spark_rows:
+            sparkline_map.setdefault(sr["ticker"], []).append(
+                {"t": sr["bucket"], "v": sr["count"]}
+            )
+
+    def _compute_trend(points: list[dict]) -> str:
+        """Compare first-half vs second-half mention sums."""
+        if len(points) < 2:
+            return "flat"
+        mid = len(points) // 2
+        first_half = sum(p["v"] for p in points[:mid])
+        second_half = sum(p["v"] for p in points[mid:])
+        if second_half > first_half:
+            return "up"
+        elif second_half < first_half:
+            return "down"
+        return "flat"
 
     from datetime import datetime, timezone
 
@@ -135,6 +168,8 @@ def trending_tickers(
                 "subreddits": sub_map.get(r["ticker"], []),
                 "first_seen": ts(r["first_seen"]),
                 "latest_mention": ts(r["latest_mention"]),
+                "sparkline": sparkline_map.get(r["ticker"], []),
+                "trend": _compute_trend(sparkline_map.get(r["ticker"], [])),
             }
             for r in rows
         ],

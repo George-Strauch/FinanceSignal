@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom'
-import { FiHome, FiTrendingUp, FiList, FiActivity } from 'react-icons/fi'
+import { FiBarChart2, FiTrendingUp, FiList, FiActivity, FiServer } from 'react-icons/fi'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
-  { to: '/', icon: FiHome, label: 'Dashboard' },
+  { to: '/', icon: FiBarChart2, label: 'Trending' },
   { to: '/tickers', icon: FiTrendingUp, label: 'Tickers' },
   { to: '/subreddits', icon: FiList, label: 'Subreddits' },
   { to: '/scraper', icon: FiActivity, label: 'Scraper Monitor' },
+  { to: '/system', icon: FiServer, label: 'System Status' },
 ]
 
 export default function Sidebar() {

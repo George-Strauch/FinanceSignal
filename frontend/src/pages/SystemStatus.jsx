@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { get } from '../api/client'
-import './Dashboard.css'
+import './SystemStatus.css'
 
 function formatUptime(seconds) {
   if (seconds < 60) return `${Math.floor(seconds)}s`
@@ -10,7 +10,7 @@ function formatUptime(seconds) {
   return `${h}h ${m}m`
 }
 
-export default function Dashboard() {
+export default function SystemStatus() {
   const [health, setHealth] = useState(null)
   const [config, setConfig] = useState(null)
   const [error, setError] = useState(false)
@@ -45,7 +45,7 @@ export default function Dashboard() {
   const status = error ? 'disconnected' : health ? 'connected' : 'loading'
 
   return (
-    <div className="dashboard">
+    <div className="system-status">
       {/* Health */}
       <div className="dash-card">
         <h2>Backend Status</h2>
