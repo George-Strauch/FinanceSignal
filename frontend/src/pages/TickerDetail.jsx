@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { FiArrowLeft, FiExternalLink, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
+import { FiArrowLeft } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
+import PostFeed from '../components/PostFeed'
 import './TickerDetail.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d']
@@ -42,15 +43,6 @@ function formatTimestamp(ts) {
   return ts.slice(5, 16)
 }
 
-function formatRelativeTime(epoch) {
-  if (!epoch) return ''
-  const diff = Date.now() / 1000 - epoch
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
-
 export default function TickerDetail() {
   const { ticker } = useParams()
   const navigate = useNavigate()
@@ -58,12 +50,6 @@ export default function TickerDetail() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-
-  // Posts state
-  const [posts, setPosts] = useState(null)
-  const [postsLoading, setPostsLoading] = useState(true)
-  const [postsPage, setPostsPage] = useState(1)
-  const [postsSort, setPostsSort] = usePersistedState('ticker-posts-sort', 'date')
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -78,26 +64,11 @@ export default function TickerDetail() {
     }
   }, [ticker, window])
 
-  const fetchPosts = useCallback(async () => {
-    setPostsLoading(true)
-    try {
-      const res = await get(`/posts?ticker=${ticker}&page=${postsPage}&sort=${postsSort}`)
-      setPosts(res)
-    } catch {
-      setPosts(null)
-    } finally {
-      setPostsLoading(false)
-    }
-  }, [ticker, postsPage, postsSort])
-
   useEffect(() => { fetchDetail() }, [fetchDetail])
-  useEffect(() => { fetchPosts() }, [fetchPosts])
-  useEffect(() => { setPostsPage(1) }, [postsSort])
 
   const subreddits = data ? Object.keys(data.mentions_by_subreddit) : []
   const chartData = data ? pivotChartData(data.mentions_over_time, subreddits) : []
   const topSubreddit = subreddits.length > 0 ? subreddits[0] : '-'
-  const pagination = posts?.pagination
 
   return (
     <div className="ticker-detail">
@@ -235,106 +206,7 @@ export default function TickerDetail() {
       )}
 
       {/* Post Feed */}
-      <div className="td-posts-section">
-        <div className="td-posts-header">
-          <h2>Recent Posts</h2>
-          <div className="td-posts-sort">
-            {['date', 'score', 'comments'].map((s) => (
-              <button
-                key={s}
-                className={`td-sort-btn ${postsSort === s ? 'active' : ''}`}
-                onClick={() => setPostsSort(s)}
-              >
-                {s === 'date' ? 'Newest' : s === 'score' ? 'Top' : 'Most Comments'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {postsLoading && !posts && (
-          <div className="td-posts-skeleton">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="td-post-skel">
-                <div className="skel-line skel-post-title" />
-                <div className="skel-line skel-post-meta" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {posts && posts.posts.length === 0 && (
-          <p className="td-no-data">No posts found mentioning {ticker?.toUpperCase()}.</p>
-        )}
-
-        {posts && posts.posts.length > 0 && (
-          <>
-            <div className="td-post-list">
-              {posts.posts.map((post) => (
-                <div key={post.id} className="td-post-card">
-                  <div className="td-post-title-row">
-                    <span className="td-post-title">{post.title}</span>
-                    <a
-                      href={post.reddit_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="td-post-link"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <FiExternalLink />
-                    </a>
-                  </div>
-                  {post.selftext_preview && (
-                    <p className="td-post-preview">{post.selftext_preview}</p>
-                  )}
-                  <div className="td-post-meta">
-                    <span className="td-post-sub">r/{post.subreddit}</span>
-                    <span className="td-post-author">u/{post.author}</span>
-                    <span>{post.score} pts</span>
-                    <span>{post.num_comments} comments</span>
-                    <span>{formatRelativeTime(post.created_utc)}</span>
-                  </div>
-                  {post.tickers_mentioned.length > 0 && (
-                    <div className="td-post-tickers">
-                      {post.tickers_mentioned.map((t) => (
-                        <Link
-                          key={t}
-                          to={`/tickers/${t}`}
-                          className={`td-ticker-chip ${t === ticker?.toUpperCase() ? 'current' : ''}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {t}
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {pagination && pagination.total_pages > 1 && (
-              <div className="td-pagination">
-                <button
-                  className="td-page-btn"
-                  disabled={postsPage <= 1}
-                  onClick={() => setPostsPage((p) => p - 1)}
-                >
-                  <FiChevronLeft />
-                </button>
-                <span className="td-page-info">
-                  Page {pagination.page} of {pagination.total_pages}
-                </span>
-                <button
-                  className="td-page-btn"
-                  disabled={postsPage >= pagination.total_pages}
-                  onClick={() => setPostsPage((p) => p + 1)}
-                >
-                  <FiChevronRight />
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      <PostFeed ticker={ticker} title="Recent Posts" />
     </div>
   )
 }
