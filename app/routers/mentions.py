@@ -1,12 +1,17 @@
 """Mention endpoints — hourly mention time series for price chart overlay."""
 
 import time
+from collections import Counter
+from datetime import datetime
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
+
+ET = ZoneInfo("America/New_York")
 
 router = APIRouter(prefix="/api/mentions")
 
@@ -39,20 +44,19 @@ def hourly_mentions(
     ticker_upper = ticker.upper()
 
     rows = db.conn.execute(
-        """
-        SELECT
-            strftime('%Y-%m-%dT%H:00:00', created_utc, 'unixepoch') AS t,
-            COUNT(*) AS v
-        FROM ticker_mentions
-        WHERE ticker = ? AND created_utc >= ?
-        GROUP BY t
-        ORDER BY t
-        """,
+        "SELECT created_utc FROM ticker_mentions WHERE ticker = ? AND created_utc >= ?",
         (ticker_upper, cutoff),
     ).fetchall()
+
+    hourly = Counter()
+    for r in rows:
+        dt = datetime.fromtimestamp(r["created_utc"], tz=ET)
+        hourly[dt.strftime("%Y-%m-%dT%H:00:00")] += 1
+
+    mentions = [{"t": k, "v": v} for k, v in sorted(hourly.items())]
 
     return {
         "ticker": ticker_upper,
         "range": range.value,
-        "mentions": [dict(r) for r in rows],
+        "mentions": mentions,
     }

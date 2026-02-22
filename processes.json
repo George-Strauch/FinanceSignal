@@ -1,46 +1,75 @@
 {
-  "jobs": [
-    {
-      "id": "reddit_scraper",
-      "name": "Reddit Scraper",
-      "description": "Fetches posts and comments from configured subreddits, extracts ticker mentions",
-      "module": "app.scraper",
-      "function": "run_collector",
-      "type": "continuous",
-      "auto_start": false,
-      "params": [
+    "jobs": [
         {
-          "key": "cycle_interval_hours",
-          "label": "Cycle Interval",
-          "type": "number",
-          "default": 3,
-          "unit": "hours",
-          "min": 0.5,
-          "max": 24,
-          "step": 0.5,
-          "description": "Time between scraping cycles"
+            "id": "reddit_scraper",
+            "name": "Reddit Scraper",
+            "description": "Fetches posts and comments from configured subreddits, extracts ticker mentions",
+            "module": "app.scraper",
+            "function": "run_scraper_cycle",
+            "type": "oneshot",
+            "auto_start": true,
+            "schedule": {
+                "interval_minutes": 30,
+                "interval_type": "after_completion"
+            },
+            "params": [
+                {
+                    "key": "request_delay_seconds",
+                    "label": "Request Delay",
+                    "type": "number",
+                    "default": 6.0,
+                    "unit": "seconds",
+                    "min": 2,
+                    "max": 30,
+                    "step": 0.5,
+                    "description": "Minimum delay between Reddit API requests"
+                }
+            ],
+            "on_failure": "stop"
         },
         {
-          "key": "request_delay_seconds",
-          "label": "Request Delay",
-          "type": "number",
-          "default": 6.0,
-          "unit": "seconds",
-          "min": 2,
-          "max": 30,
-          "step": 0.5,
-          "description": "Minimum delay between Reddit API requests"
+            "id": "ticker_reprocess",
+            "name": "Ticker Reprocess",
+            "description": "Re-extract tickers from all posts and comments (one-time cleanup)",
+            "module": "app.scraper",
+            "function": "reprocess_all_tickers",
+            "type": "oneshot",
+            "auto_start": true,
+            "on_failure": "stop",
+            "schedule": {
+                "interval_minutes": 10,
+                "interval_type": "after_completion"
+            }
+        },
+        {
+            "id": "backfetch",
+            "name": "Backfetch",
+            "description": "Paginated historical post collection with progress tracking. Auto-selects subreddits needing backfill when none specified.",
+            "module": "app.backfetch",
+            "function": "run_backfetch",
+            "type": "oneshot",
+            "auto_start": false,
+            "on_failure": "stop",
+            "params": [
+                {
+                    "key": "subreddits",
+                    "label": "Subreddits",
+                    "type": "text",
+                    "default": "",
+                    "description": "Comma or space separated list. Leave empty to auto-select subs needing backfill (not done, <900 posts)."
+                },
+                {
+                    "key": "request_delay_seconds",
+                    "label": "Request Delay",
+                    "type": "number",
+                    "default": 8.0,
+                    "unit": "seconds",
+                    "min": 2,
+                    "max": 30,
+                    "step": 0.5,
+                    "description": "Minimum delay between Reddit API requests"
+                }
+            ]
         }
-      ]
-    },
-    {
-      "id": "ticker_reprocess",
-      "name": "Ticker Reprocess",
-      "description": "Re-extract tickers from all posts and comments (one-time cleanup)",
-      "module": "app.scraper",
-      "function": "reprocess_all_tickers",
-      "type": "oneshot",
-      "auto_start": false
-    }
-  ]
+    ]
 }

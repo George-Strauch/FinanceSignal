@@ -4,3 +4,4 @@ __pycache__/
 .env
 .idea/
 backfill_state.json
+backfetch_progress.json

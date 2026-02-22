@@ -8,6 +8,7 @@ import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight
 import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
+import { recordTickerVisit } from './Tickers'
 import './TickerDetail.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d']
@@ -42,8 +43,9 @@ function pivotChartData(mentionsOverTime, subreddits) {
 
 function formatTimestamp(ts) {
   if (!ts) return ''
-  if (ts.length <= 10) return ts
-  return ts.slice(5, 16)
+  if (ts.length <= 10) return ts          // "2025-01-15" → as-is
+  // "2025-01-15T14:00:00" → "01-15 14:00"
+  return ts.slice(5, 10) + ' ' + ts.slice(11, 16)
 }
 
 function formatPrice(v) {
@@ -59,41 +61,73 @@ function formatVolume(v) {
   return v.toLocaleString()
 }
 
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function formatPriceTs(ts, range) {
   if (!ts) return ''
-  const d = new Date(ts)
   if (range === '1D' || range === '5D') {
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    // ts = "2025-01-15T14:00:00" (ET) — parse directly from string
+    const mon = MONTH_ABBR[parseInt(ts.slice(5, 7), 10) - 1]
+    const day = parseInt(ts.slice(8, 10), 10)
+    const h24 = parseInt(ts.slice(11, 13), 10)
+    const ampm = h24 >= 12 ? 'PM' : 'AM'
+    const h12 = h24 % 12 || 12
+    return `${mon} ${day} ${h12}:00 ${ampm}`
   }
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  // ts = "2025-01-15" (ET date)
+  const mon = MONTH_ABBR[parseInt(ts.slice(5, 7), 10) - 1]
+  const day = parseInt(ts.slice(8, 10), 10)
+  return `${mon} ${day}`
 }
 
-/** Merge price data with hourly mention data by timestamp key */
+/** Merge price + mention data — mention-centric: every mention bucket is visible,
+ *  price fills in where market was open. Off-market/weekend mentions always show. */
 function mergePriceMentions(prices, mentions, range) {
   if (!mentions || mentions.length === 0) return prices
 
-  // Build a lookup: truncate mention timestamps to match price granularity
-  const mentionMap = new Map()
-  for (const m of mentions) {
-    mentionMap.set(m.t, m.v)
+  const priceMap = new Map()
+  for (const p of prices) priceMap.set(p.t, p)
+
+  if (range === '1D' || range === '5D') {
+    // Hourly: both keys are "2025-01-15T14:00:00" — union all timestamps
+    const mentionMap = new Map()
+    for (const m of mentions) mentionMap.set(m.t, m.v)
+
+    const allKeys = new Set([...priceMap.keys(), ...mentionMap.keys()])
+    return [...allKeys].sort().map(t => {
+      const price = priceMap.get(t)
+      return {
+        t,
+        c: price ? price.c : null,
+        o: price ? price.o : null,
+        h: price ? price.h : null,
+        l: price ? price.l : null,
+        v: price ? price.v : null,
+        mentions: mentionMap.get(t) || null,
+      }
+    })
   }
 
-  return prices.map(p => {
-    // For hourly data, truncate to hour to match mention buckets
-    const pDate = new Date(p.t)
-    let key
-    if (range === '1D' || range === '5D') {
-      key = `${pDate.getUTCFullYear()}-${String(pDate.getUTCMonth() + 1).padStart(2, '0')}-${String(pDate.getUTCDate()).padStart(2, '0')}T${String(pDate.getUTCHours()).padStart(2, '0')}:00:00`
-    } else {
-      // For daily data, sum all hourly mentions for that day
-      const dayKey = `${pDate.getUTCFullYear()}-${String(pDate.getUTCMonth() + 1).padStart(2, '0')}-${String(pDate.getUTCDate()).padStart(2, '0')}`
-      let sum = 0
-      for (const [mk, mv] of mentionMap) {
-        if (mk.startsWith(dayKey)) sum += mv
-      }
-      return { ...p, mentions: sum || null }
+  // Daily: price keys "2025-01-15", mention keys "2025-01-15T14:00:00"
+  // Aggregate mentions to daily, then union with price dates
+  const dailyMentions = new Map()
+  for (const m of mentions) {
+    const day = m.t.slice(0, 10)
+    dailyMentions.set(day, (dailyMentions.get(day) || 0) + m.v)
+  }
+
+  const allKeys = new Set([...priceMap.keys(), ...dailyMentions.keys()])
+  return [...allKeys].sort().map(t => {
+    const price = priceMap.get(t)
+    return {
+      t,
+      c: price ? price.c : null,
+      o: price ? price.o : null,
+      h: price ? price.h : null,
+      l: price ? price.l : null,
+      v: price ? price.v : null,
+      mentions: dailyMentions.get(t) || null,
     }
-    return { ...p, mentions: mentionMap.get(key) || null }
   })
 }
 
@@ -119,6 +153,11 @@ export default function TickerDetail() {
   const [allTagSets, setAllTagSets] = useState([])
   const [tagMenuOpen, setTagMenuOpen] = useState(false)
   const tagMenuRef = useRef(null)
+
+  // Record visit for recent tickers
+  useEffect(() => {
+    if (ticker) recordTickerVisit(ticker)
+  }, [ticker])
 
   // Fetch Reddit mention detail
   const fetchDetail = useCallback(async () => {
@@ -367,7 +406,7 @@ export default function TickerDetail() {
       {/* Price Chart */}
       <div className="td-price-section">
         <div className="td-price-header">
-          <h2>Price Chart</h2>
+          <h2>Price Chart <span style={{ fontWeight: 400, fontSize: '0.75em', opacity: 0.6 }}>(ET)</span></h2>
           <div className="td-price-controls">
             <div className="td-window-selector">
               {PRICE_RANGES.map((r) => (
@@ -446,6 +485,7 @@ export default function TickerDetail() {
                   stroke="rgb(99, 102, 241)"
                   strokeWidth={2}
                   dot={false}
+                  connectNulls
                   isAnimationActive={false}
                 />
                 {mentionOverlay && (

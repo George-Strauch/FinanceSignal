@@ -1,10 +1,13 @@
 """Market data endpoints — price history and fundamentals via yfinance."""
 
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
 import yfinance as yf
+
+ET = ZoneInfo("America/New_York")
 
 router = APIRouter(prefix="/api/market")
 
@@ -52,8 +55,13 @@ def market_chart(
 
     prices = []
     for ts, row in hist.iterrows():
+        et_time = ts.astimezone(ET)
+        if interval == "1h":
+            t_str = et_time.strftime("%Y-%m-%dT%H:00:00")  # Truncate :30 → :00
+        else:
+            t_str = et_time.strftime("%Y-%m-%d")  # Date only for daily
         prices.append({
-            "t": ts.isoformat(),
+            "t": t_str,
             "o": round(row["Open"], 2),
             "h": round(row["High"], 2),
             "l": round(row["Low"], 2),

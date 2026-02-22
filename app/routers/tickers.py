@@ -1,8 +1,13 @@
 """Ticker endpoints — trending, detail, and search."""
 
+from collections import Counter, defaultdict
+from datetime import datetime
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
+
+ET = ZoneInfo("America/New_York")
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
@@ -48,7 +53,12 @@ def _bucket_format(window: str) -> str:
     """Hourly buckets for short windows, daily for 7d/30d."""
     if window in ("7d", "30d"):
         return "%Y-%m-%d"
-    return "%Y-%m-%d %H:00:00"
+    return "%Y-%m-%dT%H:00:00"
+
+
+def _et_bucket(unix_ts: float, fmt: str) -> str:
+    """Convert a unix timestamp to an ET-bucketed string."""
+    return datetime.fromtimestamp(unix_ts, tz=ET).strftime(fmt)
 
 
 def _tag_lookup() -> dict[str, list[dict]]:
@@ -206,24 +216,24 @@ def trending_tickers(
         for sr in sub_rows:
             sub_map.setdefault(sr["ticker"], []).append(sr["subreddit"])
 
-        # Sparkline: time-bucketed mention counts per ticker
+        # Sparkline: time-bucketed mention counts per ticker (ET)
         bucket_fmt = _bucket_format(window.value)
         spark_rows = db.conn.execute(
             f"""
-            SELECT ticker,
-                   strftime('{bucket_fmt}', created_utc, 'unixepoch') AS bucket,
-                   COUNT(*) AS count
+            SELECT ticker, created_utc
             FROM ticker_mentions
             WHERE created_utc >= ? AND ticker IN ({placeholders})
-            GROUP BY ticker, bucket
-            ORDER BY ticker, bucket
             """,
             [cutoff, *tickers_in_result],
         ).fetchall()
+        spark_counter: dict[str, Counter] = defaultdict(Counter)
         for sr in spark_rows:
-            sparkline_map.setdefault(sr["ticker"], []).append(
-                {"t": sr["bucket"], "v": sr["count"]}
-            )
+            bucket = _et_bucket(sr["created_utc"], bucket_fmt)
+            spark_counter[sr["ticker"]][bucket] += 1
+        for tk, counts in spark_counter.items():
+            sparkline_map[tk] = [
+                {"t": b, "v": c} for b, c in sorted(counts.items())
+            ]
 
     # Batch sentiment for all tickers
     sentiment_map = _compute_batch_sentiment(db, tickers_in_result, cutoff)
@@ -244,12 +254,10 @@ def trending_tickers(
             return "down"
         return "flat"
 
-    from datetime import datetime, timezone
-
     def ts(epoch):
         if epoch is None:
             return None
-        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(epoch, tz=ET).isoformat()
 
     return {
         "window": window.value,
@@ -306,20 +314,25 @@ def ticker_detail(
         (ticker_upper, cutoff),
     ).fetchall()
 
-    # Over time (bucketed)
-    over_time = db.conn.execute(
-        f"""
-        SELECT
-            strftime('{bucket_fmt}', created_utc, 'unixepoch') AS timestamp,
-            subreddit,
-            COUNT(*) AS count
+    # Over time (bucketed in ET)
+    time_rows = db.conn.execute(
+        """
+        SELECT created_utc, subreddit
         FROM ticker_mentions
         WHERE ticker = ? AND created_utc >= ?
-        GROUP BY timestamp, subreddit
-        ORDER BY timestamp
         """,
         (ticker_upper, cutoff),
     ).fetchall()
+
+    time_counter: dict[tuple[str, str], int] = Counter()
+    for r in time_rows:
+        bucket = _et_bucket(r["created_utc"], bucket_fmt)
+        time_counter[(bucket, r["subreddit"])] += 1
+
+    over_time = sorted(
+        [{"timestamp": k[0], "subreddit": k[1], "count": v} for k, v in time_counter.items()],
+        key=lambda x: x["timestamp"],
+    )
 
     sentiment = _compute_ticker_sentiment(db, ticker_upper, cutoff)
     tag_map = _tag_lookup()
@@ -332,5 +345,5 @@ def ticker_detail(
         "sentiment": sentiment,
         "tags": tag_map.get(ticker_upper, []),
         "mentions_by_subreddit": {r["subreddit"]: r["cnt"] for r in by_sub},
-        "mentions_over_time": [dict(r) for r in over_time],
+        "mentions_over_time": over_time,
     }
