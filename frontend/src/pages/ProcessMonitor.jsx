@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { FiPlay, FiSquare, FiRefreshCw } from 'react-icons/fi'
-import { get, post } from '../api/client'
+import { FiPlay, FiSquare, FiRefreshCw, FiEdit2, FiCheck, FiX } from 'react-icons/fi'
+import { get, post, put } from '../api/client'
 import './ProcessMonitor.css'
 
 function formatUptime(seconds) {
@@ -28,6 +28,21 @@ function formatLogTs(iso) {
   return new Date(iso).toLocaleTimeString()
 }
 
+function formatCountdown(seconds) {
+  if (seconds == null || seconds <= 0) return '0s'
+  if (seconds < 60) return `${Math.floor(seconds)}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m}m ${s}s`
+}
+
+function scheduleLabel(schedule) {
+  if (!schedule) return null
+  const mins = schedule.interval_minutes
+  if (schedule.interval_type === 'after_completion') return `${mins}m cooldown`
+  return `every ${mins}m`
+}
+
 export default function ProcessMonitor() {
   const [jobs, setJobs] = useState([])
   const [error, setError] = useState(null)
@@ -39,8 +54,19 @@ export default function ProcessMonitor() {
   const [sortDir, setSortDir] = useState('asc')
   const [actionLoading, setActionLoading] = useState(null)
   const [paramValues, setParamValues] = useState({})
+  const [editMode, setEditMode] = useState(false)
+  const [editConfig, setEditConfig] = useState({})
+  const [saveLoading, setSaveLoading] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const logRef = useRef(null)
   const prevSelectedRef = useRef(null)
+  const [now, setNow] = useState(Date.now())
+
+  // Tick every second for countdown display
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
 
   // Fetch job list
   const fetchJobs = useCallback(async () => {
@@ -91,9 +117,11 @@ export default function ProcessMonitor() {
     return () => clearInterval(id)
   }, [selectedJobId, fetchDetail])
 
-  // Initialize param values when selecting a job
+  // Initialize param values and reset edit mode when selecting a job
   useEffect(() => {
     if (selectedJobId && selectedJobId !== prevSelectedRef.current) {
+      setEditMode(false)
+      setSaveError(null)
       const job = jobs.find((j) => j.id === selectedJobId)
       if (job) {
         // Use current_params if available (reflects running/last-run values), else defaults
@@ -154,17 +182,79 @@ export default function ProcessMonitor() {
     return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
   }
 
-  const runningCount = jobs.filter((j) => j.running).length
+  const enterEditMode = () => {
+    if (!selectedJob) return
+    setEditConfig({
+      name: selectedJob.name,
+      description: selectedJob.description || '',
+      type: selectedJob.type,
+      on_failure: selectedJob.on_failure || 'stop',
+      auto_start: selectedJob.auto_start || false,
+      schedule_enabled: !!selectedJob.schedule,
+      interval_minutes: selectedJob.schedule?.interval_minutes || 30,
+      interval_type: selectedJob.schedule?.interval_type || 'after_completion',
+    })
+    setSaveError(null)
+    setEditMode(true)
+  }
+
+  const cancelEdit = () => {
+    setEditMode(false)
+    setSaveError(null)
+  }
+
+  const handleSaveConfig = async () => {
+    if (!selectedJob) return
+    setSaveLoading(true)
+    setSaveError(null)
+    try {
+      const payload = {
+        name: editConfig.name,
+        description: editConfig.description,
+        type: editConfig.type,
+        auto_start: editConfig.auto_start,
+      }
+      if (editConfig.type === 'continuous') {
+        payload.on_failure = editConfig.on_failure
+        payload.schedule = null
+      } else {
+        payload.on_failure = 'stop'
+        if (editConfig.schedule_enabled) {
+          payload.schedule = {
+            interval_minutes: parseInt(editConfig.interval_minutes, 10) || 30,
+            interval_type: editConfig.interval_type,
+          }
+        } else {
+          payload.schedule = null
+        }
+      }
+      await put(`/processes/${selectedJob.id}/config`, payload)
+      setEditMode(false)
+      await fetchJobs()
+      await fetchDetail(selectedJob.id)
+    } catch (err) {
+      setSaveError(err.message || 'Failed to save')
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const updateEditField = (key, value) => {
+    setEditConfig((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const runningCount = jobs.filter((j) => j.running || j.schedule_active).length
   const selectedJob = jobs.find((j) => j.id === selectedJobId)
 
   // Action buttons for detail panel
   const renderDetailActions = () => {
     if (!selectedJob) return null
+    const isActive = selectedJob.running || selectedJob.schedule_active
     return (
       <div className="detail-actions-header">
         <h2>{selectedJob.name}</h2>
         <div className="detail-actions">
-          {!selectedJob.running && (
+          {!isActive && (
             <button
               className="job-action-btn"
               onClick={() => handleAction(selectedJob.id, 'start')}
@@ -173,7 +263,7 @@ export default function ProcessMonitor() {
               <FiPlay size={12} /> Start
             </button>
           )}
-          {selectedJob.running && (
+          {isActive && (
             <button
               className="job-action-btn stop"
               onClick={() => handleAction(selectedJob.id, 'stop')}
@@ -189,6 +279,201 @@ export default function ProcessMonitor() {
           >
             <FiRefreshCw size={12} /> Restart
           </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Schedule status section
+  const renderScheduleStatus = () => {
+    if (!selectedJob?.schedule || !jobDetail) return null
+    const detail = jobDetail
+    if (!detail.schedule_active) return null
+
+    const nextRunIso = detail.next_run_at
+    let countdownSecs = null
+    let stateLabel = 'Waiting'
+    if (detail.running) {
+      stateLabel = 'Running cycle'
+    } else if (nextRunIso) {
+      countdownSecs = Math.max(0, Math.floor((new Date(nextRunIso).getTime() - now) / 1000))
+      stateLabel = `Waiting — next run in ${formatCountdown(countdownSecs)}`
+    }
+
+    return (
+      <div className="dash-card schedule-status-card">
+        <h2>Schedule</h2>
+        <div className="schedule-status-content">
+          <span className={`schedule-state-badge ${detail.running ? 'running' : 'waiting'}`}>
+            {stateLabel}
+          </span>
+          <span className="schedule-type-label">
+            {scheduleLabel(selectedJob.schedule)}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  // Config editor (read-only display + edit form)
+  const renderConfigEditor = () => {
+    if (!selectedJob) return null
+    const isActive = selectedJob.running || selectedJob.schedule_active
+
+    if (!editMode) {
+      return (
+        <div className="dash-card">
+          <div className="config-editor-header">
+            <h2>Configuration</h2>
+            {!isActive && (
+              <button className="job-action-btn" onClick={enterEditMode}>
+                <FiEdit2 size={12} /> Edit
+              </button>
+            )}
+          </div>
+          <div className="config-display-grid">
+            <div className="detail-field">
+              <span className="detail-field-label">Type</span>
+              <span className="detail-field-value">{selectedJob.type}</span>
+            </div>
+            {selectedJob.type === 'continuous' && (
+              <div className="detail-field">
+                <span className="detail-field-label">On Failure</span>
+                <span className="detail-field-value">
+                  {selectedJob.on_failure === 'restart' ? 'Restart (10s delay)' : 'Stop'}
+                </span>
+              </div>
+            )}
+            {selectedJob.type === 'oneshot' && (
+              <div className="detail-field">
+                <span className="detail-field-label">Schedule</span>
+                <span className="detail-field-value">
+                  {scheduleLabel(selectedJob.schedule) || 'None'}
+                </span>
+              </div>
+            )}
+            <div className="detail-field">
+              <span className="detail-field-label">Auto Start</span>
+              <span className="detail-field-value">{selectedJob.auto_start ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Edit mode
+    return (
+      <div className="dash-card">
+        <div className="config-editor-header">
+          <h2>Edit Configuration</h2>
+          <div className="detail-actions">
+            <button
+              className="job-action-btn"
+              onClick={handleSaveConfig}
+              disabled={saveLoading}
+            >
+              <FiCheck size={12} /> {saveLoading ? 'Saving...' : 'Save'}
+            </button>
+            <button className="job-action-btn" onClick={cancelEdit} disabled={saveLoading}>
+              <FiX size={12} /> Cancel
+            </button>
+          </div>
+        </div>
+        {saveError && <div className="config-save-error">{saveError}</div>}
+        <div className="config-form">
+          <div className="config-field">
+            <label className="param-label">Name</label>
+            <input
+              className="config-input"
+              type="text"
+              value={editConfig.name || ''}
+              onChange={(e) => updateEditField('name', e.target.value)}
+            />
+          </div>
+          <div className="config-field">
+            <label className="param-label">Description</label>
+            <input
+              className="config-input"
+              type="text"
+              value={editConfig.description || ''}
+              onChange={(e) => updateEditField('description', e.target.value)}
+            />
+          </div>
+          <div className="config-field-row">
+            <div className="config-field">
+              <label className="param-label">Type</label>
+              <select
+                className="config-input"
+                value={editConfig.type}
+                onChange={(e) => updateEditField('type', e.target.value)}
+              >
+                <option value="continuous">Continuous</option>
+                <option value="oneshot">Oneshot</option>
+              </select>
+            </div>
+            <div className="config-field">
+              <label className="param-label">Auto Start</label>
+              <button
+                className={`config-toggle${editConfig.auto_start ? ' active' : ''}`}
+                onClick={() => updateEditField('auto_start', !editConfig.auto_start)}
+                type="button"
+              >
+                {editConfig.auto_start ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
+          {editConfig.type === 'continuous' && (
+            <div className="config-field">
+              <label className="param-label">On Failure</label>
+              <select
+                className="config-input"
+                value={editConfig.on_failure}
+                onChange={(e) => updateEditField('on_failure', e.target.value)}
+              >
+                <option value="stop">Stop</option>
+                <option value="restart">Restart (10s delay)</option>
+              </select>
+            </div>
+          )}
+          {editConfig.type === 'oneshot' && (
+            <>
+              <div className="config-field">
+                <label className="param-label">Schedule</label>
+                <button
+                  className={`config-toggle${editConfig.schedule_enabled ? ' active' : ''}`}
+                  onClick={() => updateEditField('schedule_enabled', !editConfig.schedule_enabled)}
+                  type="button"
+                >
+                  {editConfig.schedule_enabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              {editConfig.schedule_enabled && (
+                <div className="config-schedule-fields">
+                  <div className="config-field">
+                    <label className="param-label">Interval (minutes)</label>
+                    <input
+                      className="config-input"
+                      type="number"
+                      min={1}
+                      value={editConfig.interval_minutes}
+                      onChange={(e) => updateEditField('interval_minutes', e.target.value)}
+                    />
+                  </div>
+                  <div className="config-field">
+                    <label className="param-label">Interval Type</label>
+                    <select
+                      className="config-input"
+                      value={editConfig.interval_type}
+                      onChange={(e) => updateEditField('interval_type', e.target.value)}
+                    >
+                      <option value="after_completion">After Completion</option>
+                      <option value="interval">Fixed Interval</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     )
@@ -214,7 +499,7 @@ export default function ProcessMonitor() {
                 min={p.min}
                 max={p.max}
                 step={p.step}
-                disabled={selectedJob.running}
+                disabled={selectedJob.running || selectedJob.schedule_active}
                 onChange={(e) => handleParamChange(p.key, parseFloat(e.target.value))}
               />
               {p.description && <span className="param-description">{p.description}</span>}
@@ -389,11 +674,13 @@ export default function ProcessMonitor() {
           >
             <div className="job-card-top">
               <span className="job-card-name">{job.name}</span>
-              <span className={`job-status-dot ${job.running ? 'running' : 'stopped'}`} />
+              <span className={`job-status-dot ${(job.running || job.schedule_active) ? 'running' : 'stopped'}`} />
             </div>
             {job.description && <div className="job-card-desc">{job.description}</div>}
             <div className="job-card-meta">
-              <span className="job-type-badge">{job.type}</span>
+              <span className="job-type-badge">
+                {scheduleLabel(job.schedule) || job.type}
+              </span>
             </div>
           </div>
         ))}
@@ -403,6 +690,8 @@ export default function ProcessMonitor() {
       {selectedJobId && jobDetail && (
         <div className="job-detail-panel">
           {renderDetailActions()}
+          {renderConfigEditor()}
+          {renderScheduleStatus()}
           {renderParamInputs()}
           {jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
 

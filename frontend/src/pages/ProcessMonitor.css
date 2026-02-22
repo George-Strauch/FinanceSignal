@@ -326,6 +326,38 @@
   color: rgb(var(--accent));
 }
 
+/* ── Schedule Status ────────────────────────────────────────── */
+
+.schedule-status-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.schedule-state-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.schedule-state-badge.running {
+  background: rgba(var(--accent), 0.15);
+  color: rgb(var(--accent));
+}
+
+.schedule-state-badge.waiting {
+  background: rgba(var(--color-success), 0.12);
+  color: rgb(var(--color-success));
+}
+
+.schedule-type-label {
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+}
+
 /* ── Generic Job Detail ──────────────────────────────────────── */
 
 .generic-detail-grid {
@@ -420,6 +452,98 @@
 .log-empty {
   color: rgb(var(--soft-text));
   font-style: italic;
+}
+
+/* ── Config Editor ───────────────────────────────────────────── */
+
+.config-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.config-editor-header h2 {
+  margin-bottom: 0 !important;
+}
+
+.config-display-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.config-input {
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.88rem;
+  color: rgb(var(--hard-text));
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+.config-input:focus {
+  outline: none;
+  border-color: rgb(var(--accent));
+}
+
+.config-toggle {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  width: fit-content;
+}
+
+.config-toggle.active {
+  background: rgba(var(--accent), 0.12);
+  color: rgb(var(--accent));
+  border-color: rgba(var(--accent), 0.3);
+}
+
+.config-schedule-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding-left: 14px;
+  border-left: 2px solid rgb(var(--accent));
+}
+
+.config-save-error {
+  background: rgba(var(--color-error), 0.1);
+  border: 1px solid rgba(var(--color-error), 0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: rgb(var(--color-error));
+  font-size: 0.82rem;
+  margin-bottom: 8px;
 }
 
 /* ── Error ────────────────────────────────────────────────────── */
