@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+.git/
+.gitignore
+.env
+.idea/
+*.egg-info/
+node_modules/
+frontend/dist/
+backfill_state.json
+backfetch_progress.json
+docker/

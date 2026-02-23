@@ -9,11 +9,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
-from app.config import PROJECT_ROOT
+from app.config import DATA_DIR
 
 router = APIRouter(prefix="/api/ticker-tags")
 
-TAGS_PATH = PROJECT_ROOT / "ticker_tags.json"
+TAGS_PATH = DATA_DIR / "ticker_tags.json"
 TAG_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 _lock = threading.Lock()

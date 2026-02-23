@@ -4,13 +4,17 @@ import json
 import os
 from pathlib import Path
 
-# ── Project root (redditScraper/) ──────────────────────────────────────
+# ── Project root (source code location) ───────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# ── Data directory (mutable files: DB, JSON configs, .env) ────────────
+# Defaults to PROJECT_ROOT for local dev; set to /app/data in Docker.
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(PROJECT_ROOT)))
 
 
 def _load_env():
     """Parse .env file into os.environ (KEY=VALUE lines, # comments)."""
-    env_path = PROJECT_ROOT / ".env"
+    env_path = DATA_DIR / ".env"
     if not env_path.exists():
         return
     with open(env_path) as f:
@@ -32,7 +36,7 @@ def _load_env():
 _load_env()
 
 # ── Exported constants ─────────────────────────────────────────────────
-DB_PATH = os.environ.get("DB_PATH", str(PROJECT_ROOT / "reddit_data.db"))
+DB_PATH = os.environ.get("DB_PATH", str(DATA_DIR / "reddit_data.db"))
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 MIN_REQUEST_INTERVAL = float(os.environ.get("MIN_REQUEST_INTERVAL", "6.0"))
@@ -42,13 +46,13 @@ USER_AGENT = os.environ.get(
 )
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "100"))
 BACKFILL_STATE_PATH = os.environ.get(
-    "BACKFILL_STATE_PATH", str(PROJECT_ROOT / "backfill_state.json")
+    "BACKFILL_STATE_PATH", str(DATA_DIR / "backfill_state.json")
 )
 
 
 def load_subreddits() -> list[str]:
     """Read subreddits.json and return a list of subreddit names."""
-    path = PROJECT_ROOT / "subreddits.json"
+    path = DATA_DIR / "subreddits.json"
     with open(path) as f:
         data = json.load(f)
     if not isinstance(data, list) or not all(isinstance(s, str) for s in data):

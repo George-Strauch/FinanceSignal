@@ -2,7 +2,7 @@
 
 import os
 
-from sentinel.config import DB_PATH, PROJECT_ROOT, load_subreddits  # noqa: F401
+from sentinel.config import DATA_DIR, DB_PATH, PROJECT_ROOT, load_subreddits  # noqa: F401
 
 HOST = os.environ.get("APP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("APP_PORT", "8000"))

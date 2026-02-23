@@ -21,9 +21,11 @@ from sentinel.fetcher import RedditFetcher
 
 logger = logging.getLogger(__name__)
 
+from app.config import DATA_DIR
+
 # Paths
-PROGRESS_FILE = Path(__file__).resolve().parent.parent / "backfetch_progress.json"
-SUBREDDITS_FILE = Path(__file__).resolve().parent.parent / "subreddits.json"
+PROGRESS_FILE = DATA_DIR / "backfetch_progress.json"
+SUBREDDITS_FILE = DATA_DIR / "subreddits.json"
 
 # Termination / pacing
 BACKOFF_BASE = 3.0

@@ -10,13 +10,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
-from app.config import PROJECT_ROOT
+from app.config import DATA_DIR
 from app.database import get_db
 from sentinel.db import RedditDatabase
 
 router = APIRouter(prefix="/api/subreddits")
 
-SUBREDDITS_PATH = PROJECT_ROOT / "subreddits.json"
+SUBREDDITS_PATH = DATA_DIR / "subreddits.json"
 SUBREDDIT_RE = re.compile(r"^[A-Za-z0-9_]{1,21}$")
 
 _lock = threading.Lock()

@@ -13,7 +13,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-PROCESSES_FILE = Path(__file__).resolve().parent.parent / "processes.json"
+from app.config import DATA_DIR
+
+PROCESSES_FILE = DATA_DIR / "processes.json"
 
 
 @dataclass
