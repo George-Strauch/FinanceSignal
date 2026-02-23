@@ -1,4 +1,4 @@
-"""Scraper background task — wraps fetch + ticker extraction in an async loop."""
+"""Scraper background task — single-cycle fetch + ticker extraction."""
 
 import asyncio
 import logging
@@ -32,14 +32,15 @@ class ScraperState:
     cycle_start_time: float | None = None
     last_completed_cycle: float | None = None
     errors_this_cycle: int = 0
-    interval_seconds: int = 10800  # 3 hours
     request_delay: float = 6.0  # seconds between Reddit API requests
     # Monitoring fields
     started_at: float | None = None
     total_cycles_completed: int = 0
     total_posts_collected: int = 0
+    total_comments_collected: int = 0
     total_errors: int = 0
     posts_this_cycle: int = 0
+    comments_this_cycle: int = 0
     subreddits_completed: int = 0
     subreddit_stats: dict[str, SubredditStats] = field(default_factory=dict)
     log_buffer: deque = field(default_factory=lambda: deque(maxlen=100))
@@ -47,77 +48,62 @@ class ScraperState:
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
 
-async def run_collector(state: ScraperState):
-    """Main collector loop — fetches posts and extracts tickers on a timer."""
-    state.started_at = time.time()
+async def run_scraper_cycle(state: ScraperState):
+    """Run one scraper cycle — fetch posts and extract tickers, then return."""
+    state.current_cycle += 1
+    state.cycle_start_time = time.time()
+    state.errors_this_cycle = 0
+    state.posts_this_cycle = 0
+    state.comments_this_cycle = 0
+    state.subreddits_completed = 0
+
+    # Reset per-subreddit cycle counts
+    for stats in state.subreddit_stats.values():
+        stats.posts_last_cycle = 0
+        stats.status = "pending"
+
+    logger.info("Cycle %d starting", state.current_cycle)
+
     try:
-        while not state._stop_event.is_set():
-            state.current_cycle += 1
-            state.cycle_start_time = time.time()
-            state.errors_this_cycle = 0
-            state.posts_this_cycle = 0
-            state.subreddits_completed = 0
+        subreddits = load_subreddits()
+    except Exception:
+        logger.exception("Failed to load subreddits")
+        state.errors_this_cycle += 1
+        subreddits = []
 
-            # Reset per-subreddit cycle counts
-            for stats in state.subreddit_stats.values():
-                stats.posts_last_cycle = 0
-                stats.status = "pending"
-
-            logger.info("Cycle %d starting", state.current_cycle)
-
-            try:
-                subreddits = load_subreddits()
-            except Exception:
-                logger.exception("Failed to load subreddits")
-                state.errors_this_cycle += 1
-                subreddits = []
-
-            for subreddit in subreddits:
-                if state._stop_event.is_set():
-                    break
-                state.current_subreddit = subreddit
-                if subreddit not in state.subreddit_stats:
-                    state.subreddit_stats[subreddit] = SubredditStats()
-                try:
-                    await asyncio.to_thread(_fetch_subreddit, subreddit, state)
-                except Exception:
-                    logger.exception("Failed to fetch r/%s", subreddit)
-                    state.errors_this_cycle += 1
-                    state.subreddit_stats[subreddit].status = "error"
-                    state.subreddit_stats[subreddit].last_error = (
-                        f"Unhandled exception in r/{subreddit}"
-                    )
-
-            state.current_subreddit = None
-
-            if not state._stop_event.is_set():
-                try:
-                    await asyncio.to_thread(_process_tickers)
-                except Exception:
-                    logger.exception("Ticker processing failed")
-                    state.errors_this_cycle += 1
-
-            state.last_completed_cycle = time.time()
-            state.total_cycles_completed += 1
-            state.total_errors += state.errors_this_cycle
-            logger.info(
-                "Cycle %d complete — %d errors",
-                state.current_cycle,
-                state.errors_this_cycle,
+    for subreddit in subreddits:
+        if state._stop_event.is_set():
+            break
+        state.current_subreddit = subreddit
+        if subreddit not in state.subreddit_stats:
+            state.subreddit_stats[subreddit] = SubredditStats()
+        try:
+            await asyncio.to_thread(_fetch_subreddit, subreddit, state)
+        except Exception:
+            logger.exception("Failed to fetch r/%s", subreddit)
+            state.errors_this_cycle += 1
+            state.subreddit_stats[subreddit].status = "error"
+            state.subreddit_stats[subreddit].last_error = (
+                f"Unhandled exception in r/{subreddit}"
             )
 
-            # Interruptible sleep
-            try:
-                await asyncio.wait_for(
-                    state._stop_event.wait(),
-                    timeout=state.interval_seconds,
-                )
-            except asyncio.TimeoutError:
-                pass  # Timeout means it's time for the next cycle
-    finally:
-        state.running = False
-        state.current_subreddit = None
-        logger.info("Collector stopped")
+    state.current_subreddit = None
+
+    if not state._stop_event.is_set():
+        try:
+            await asyncio.to_thread(_process_tickers)
+        except Exception:
+            logger.exception("Ticker processing failed")
+            state.errors_this_cycle += 1
+
+    state.last_completed_cycle = time.time()
+    state.total_cycles_completed += 1
+    state.total_errors += state.errors_this_cycle
+    logger.info(
+        "Cycle %d complete — %d errors",
+        state.current_cycle,
+        state.errors_this_cycle,
+    )
 
 
 def _fetch_subreddit(subreddit: str, state: ScraperState):
@@ -178,6 +164,8 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
     sub_stats.status = "ok"
     state.posts_this_cycle += total_new
     state.total_posts_collected += total_new
+    state.comments_this_cycle += total_comments
+    state.total_comments_collected += total_comments
     state.subreddits_completed += 1
 
     logger.info(

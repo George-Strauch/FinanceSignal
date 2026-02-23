@@ -486,25 +486,29 @@ export default function ProcessMonitor() {
       <div className="dash-card">
         <h2>Parameters</h2>
         <div className="param-inputs-grid">
-          {selectedJob.params.map((p) => (
-            <div key={p.key} className="param-field">
-              <label className="param-label">
-                {p.label}
-                {p.unit && <span className="param-unit">({p.unit})</span>}
-              </label>
-              <input
-                className="param-input"
-                type="number"
-                value={paramValues[p.key] ?? p.default}
-                min={p.min}
-                max={p.max}
-                step={p.step}
-                disabled={selectedJob.running || selectedJob.schedule_active}
-                onChange={(e) => handleParamChange(p.key, parseFloat(e.target.value))}
-              />
-              {p.description && <span className="param-description">{p.description}</span>}
-            </div>
-          ))}
+          {selectedJob.params.map((p) => {
+            const isText = p.type === 'text'
+            return (
+              <div key={p.key} className="param-field">
+                <label className="param-label">
+                  {p.label}
+                  {p.unit && <span className="param-unit">({p.unit})</span>}
+                </label>
+                <input
+                  className="param-input"
+                  type={isText ? 'text' : 'number'}
+                  value={paramValues[p.key] ?? p.default}
+                  {...(!isText && { min: p.min, max: p.max, step: p.step })}
+                  disabled={selectedJob.running || selectedJob.schedule_active}
+                  onChange={(e) => handleParamChange(
+                    p.key,
+                    isText ? e.target.value : parseFloat(e.target.value),
+                  )}
+                />
+                {p.description && <span className="param-description">{p.description}</span>}
+              </div>
+            )
+          })}
         </div>
       </div>
     )
@@ -551,6 +555,10 @@ export default function ProcessMonitor() {
               <div className="stat-label">Posts Collected</div>
             </div>
             <div className="stat-item">
+              <div className="stat-value">{(scraper.total_comments_collected || 0).toLocaleString()}</div>
+              <div className="stat-label">Comments Collected</div>
+            </div>
+            <div className="stat-item">
               <div className="stat-value">{scraper.total_errors}</div>
               <div className="stat-label">Errors</div>
             </div>
@@ -573,6 +581,10 @@ export default function ProcessMonitor() {
             <div className="stat-item">
               <div className="stat-value">{current_cycle.posts_this_cycle}</div>
               <div className="stat-label">Posts This Cycle</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-value">{(current_cycle.comments_this_cycle || 0).toLocaleString()}</div>
+              <div className="stat-label">Comments This Cycle</div>
             </div>
             <div className="stat-item">
               <div className="stat-value">{current_cycle.errors_this_cycle}</div>

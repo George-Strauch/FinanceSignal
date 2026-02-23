@@ -224,10 +224,17 @@ class ProcessManager:
         proc.running = False
 
     async def _run_oneshot(self, proc: ProcessState, func):
-        """Wrapper for one-shot jobs (runs in thread, marks complete/errored)."""
+        """Wrapper for one-shot jobs (marks complete/errored)."""
         try:
-            await asyncio.to_thread(func)
+            job_state = self._create_job_state(proc, func)
+            if job_state is not None:
+                proc.job_state = job_state
+                await func(job_state)
+            else:
+                await asyncio.to_thread(func)
             proc.completed_at = time.time()
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
             logger.exception("Oneshot job %s failed", proc.id)
             proc.error = str(exc)
@@ -375,6 +382,18 @@ class ProcessManager:
             if "request_delay_seconds" in params:
                 state.request_delay = float(params["request_delay_seconds"])
             return state
+
+        if proc.id == "backfetch":
+            from app.backfetch import BackfetchState, _parse_subreddits
+            params = proc.current_params
+            state = BackfetchState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            state.subreddits = _parse_subreddits(str(params.get("subreddits", "")))
+            if "request_delay_seconds" in params:
+                state.request_delay = float(params["request_delay_seconds"])
+            return state
+
         return None
 
 

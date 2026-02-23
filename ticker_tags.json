@@ -34,7 +34,34 @@
                 "DCA",
                 "TACO",
                 "FCF",
-                "IV"
+                "IV",
+                "FIRE",
+                "ICT",
+                "IRS",
+                "NY",
+                "RSI",
+                "BS",
+                "DRIP",
+                "UK",
+                "CVNA",
+                "EU",
+                "YTD",
+                "ES",
+                "AWS",
+                "API",
+                "GPS",
+                "AND",
+                "VWAP",
+                "GPU",
+                "DRS",
+                "RC",
+                "SL",
+                "LOL",
+                "HYSA",
+                "NAV",
+                "LIVE",
+                "GAAP",
+                "ROI"
             ]
         },
         {
@@ -73,7 +100,13 @@
                 "GLD",
                 "SLV",
                 "TLT",
-                "SCHD"
+                "SCHD",
+                "SPX",
+                "SCHG",
+                "QQQI",
+                "VT",
+                "VXUS",
+                "SGOV"
             ]
         }
     ]

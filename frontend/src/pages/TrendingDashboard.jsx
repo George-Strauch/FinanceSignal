@@ -7,6 +7,7 @@ import usePersistedState from '../hooks/usePersistedState'
 import './TrendingDashboard.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d']
+const LIMIT_OPTIONS = [20, 50, 100]
 const REFRESH_INTERVAL = 60
 
 function SparklineChart({ data, id }) {
@@ -97,6 +98,7 @@ export default function TrendingDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [window, setWindow] = usePersistedState('trending-window', '24h')
+  const [limit, setLimit] = usePersistedState('trending-limit', 20)
   const [viewMode, setViewMode] = usePersistedState('trending-view', 'cards')
   const [autoRefresh, setAutoRefresh] = usePersistedState('trending-autorefresh', false)
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL)
@@ -114,7 +116,7 @@ export default function TrendingDashboard() {
     else setLoading(true)
     setError(null)
     try {
-      const res = await get(`/tickers/trending?window=${window}`)
+      const res = await get(`/tickers/trending?window=${window}&limit=${limit}`)
       setData(res)
     } catch (err) {
       setError(err.message)
@@ -122,7 +124,7 @@ export default function TrendingDashboard() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [window])
+  }, [window, limit])
 
   // Fetch on mount + window change
   useEffect(() => {
@@ -222,6 +224,17 @@ export default function TrendingDashboard() {
                 onClick={() => setWindow(w)}
               >
                 {w}
+              </button>
+            ))}
+          </div>
+          <div className="limit-selector">
+            {LIMIT_OPTIONS.map((n) => (
+              <button
+                key={n}
+                className={`window-btn ${limit === n ? 'active' : ''}`}
+                onClick={() => setLimit(n)}
+              >
+                {n}
               </button>
             ))}
           </div>

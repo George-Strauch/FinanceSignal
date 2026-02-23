@@ -43,7 +43,8 @@
 
 /* ── Window Selector ──────────────────────────────────────────── */
 
-.window-selector {
+.window-selector,
+.limit-selector {
   display: flex;
   border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
   border-radius: 8px;

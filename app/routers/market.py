@@ -1,5 +1,6 @@
 """Market data endpoints — price history and fundamentals via yfinance."""
 
+import math
 from enum import Enum
 from zoneinfo import ZoneInfo
 
@@ -53,6 +54,8 @@ def market_chart(
     t = yf.Ticker(ticker.upper())
     hist = t.history(period=range.value, interval=interval)
 
+    hist = hist.dropna(subset=["Open", "High", "Low", "Close"])
+
     prices = []
     for ts, row in hist.iterrows():
         et_time = ts.astimezone(ET)
@@ -66,7 +69,7 @@ def market_chart(
             "h": round(row["High"], 2),
             "l": round(row["Low"], 2),
             "c": round(row["Close"], 2),
-            "v": int(row["Volume"]),
+            "v": int(row["Volume"]) if not math.isnan(row["Volume"]) else 0,
         })
 
     return {

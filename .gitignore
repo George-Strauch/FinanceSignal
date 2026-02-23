@@ -1,7 +1,11 @@
 .venv/
 __pycache__/
 *.db
+*.db-shm
+*.db-wal
 .env
 .idea/
+*.egg-info/
 backfill_state.json
 backfetch_progress.json
+node_modules/

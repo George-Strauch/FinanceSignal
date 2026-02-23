@@ -114,6 +114,7 @@ async def get_process(job_id: str, db: RedditDatabase = Depends(get_db)):
                 "uptime_seconds": uptime,
                 "total_cycles_completed": state.total_cycles_completed,
                 "total_posts_collected": state.total_posts_collected,
+                "total_comments_collected": state.total_comments_collected,
                 "total_errors": state.total_errors,
             },
             "current_cycle": {
@@ -123,6 +124,7 @@ async def get_process(job_id: str, db: RedditDatabase = Depends(get_db)):
                 "subreddits_completed": state.subreddits_completed,
                 "subreddits_remaining": subreddits_remaining,
                 "posts_this_cycle": state.posts_this_cycle,
+                "comments_this_cycle": state.comments_this_cycle,
                 "errors_this_cycle": state.errors_this_cycle,
             },
             "per_subreddit": per_subreddit,
