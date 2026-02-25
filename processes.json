@@ -42,6 +42,20 @@
             }
         },
         {
+            "id": "ner_extraction",
+            "name": "NER Extraction",
+            "description": "Extract named entities (people, companies, etc.) from posts and comments using spaCy",
+            "module": "app.ner_processor",
+            "function": "run_ner_extraction",
+            "type": "oneshot",
+            "auto_start": false,
+            "schedule": {
+                "interval_minutes": 30,
+                "interval_type": "after_completion"
+            },
+            "on_failure": "stop"
+        },
+        {
             "id": "backfetch",
             "name": "Backfetch",
             "description": "Paginated historical post collection with progress tracking. Auto-selects subreddits needing backfill when none specified.",
@@ -70,6 +84,33 @@
                     "description": "Minimum delay between Reddit API requests"
                 }
             ]
+        },
+        {
+            "id": "fundamentals_fetcher",
+            "name": "Fundamentals Fetcher",
+            "description": "Pulls yfinance fundamental data for all tickers mentioned in the last 7 days, sorted by mention count. Runs at 90% yfinance rate limit.",
+            "module": "app.fundamentals",
+            "function": "run_fundamentals_cycle",
+            "type": "oneshot",
+            "auto_start": true,
+            "schedule": {
+                "interval_minutes": 30,
+                "interval_type": "after_completion"
+            },
+            "params": [
+                {
+                    "key": "request_delay_seconds",
+                    "label": "Request Delay",
+                    "type": "number",
+                    "default": 2.0,
+                    "unit": "seconds",
+                    "min": 1,
+                    "max": 30,
+                    "step": 0.5,
+                    "description": "Delay between yfinance API calls (default ~2s = 90% of rate limit)"
+                }
+            ],
+            "on_failure": "stop"
         }
     ]
 }

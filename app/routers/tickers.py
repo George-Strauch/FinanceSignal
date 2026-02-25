@@ -29,6 +29,12 @@ WINDOW_SECONDS = {
 }
 
 
+class CountMode(str, Enum):
+    mentions = "mentions"
+    authors = "authors"
+    posts = "posts"
+
+
 class TrendingWindow(str, Enum):
     h1 = "1h"
     h6 = "6h"
@@ -49,16 +55,23 @@ def _cutoff(window: str) -> float:
     return time.time() - WINDOW_SECONDS[window]
 
 
+BUCKET_HOUR_ROUND = {"7d": 4, "30d": 4}
+
+
 def _bucket_format(window: str) -> str:
-    """Hourly buckets for short windows, daily for 7d/30d."""
-    if window in ("7d", "30d"):
-        return "%Y-%m-%d"
-    return "%Y-%m-%dT%H:00:00"
+    """Hourly for short windows, 4-hour for 7d, 12-hour for 30d."""
+    if window in BUCKET_HOUR_ROUND or window in ("1h", "6h", "24h"):
+        return "%Y-%m-%dT%H:00:00"
+    return "%Y-%m-%d"
 
 
-def _et_bucket(unix_ts: float, fmt: str) -> str:
-    """Convert a unix timestamp to an ET-bucketed string."""
-    return datetime.fromtimestamp(unix_ts, tz=ET).strftime(fmt)
+def _et_bucket(unix_ts: float, fmt: str, window: str = "") -> str:
+    """Convert a unix timestamp to an ET-bucketed string with optional hour rounding."""
+    dt = datetime.fromtimestamp(unix_ts, tz=ET)
+    rnd = BUCKET_HOUR_ROUND.get(window, 0)
+    if rnd:
+        dt = dt.replace(hour=(dt.hour // rnd) * rnd, minute=0, second=0)
+    return dt.strftime(fmt)
 
 
 def _tag_lookup() -> dict[str, list[dict]]:
@@ -175,28 +188,77 @@ def search_tickers(
 def trending_tickers(
     window: TrendingWindow = TrendingWindow.h24,
     limit: int = Query(20, ge=1, le=100),
+    count_mode: CountMode = CountMode.mentions,
     db: RedditDatabase = Depends(get_db),
 ):
     _ensure_indexes(db)
     cutoff = _cutoff(window.value)
 
-    rows = db.conn.execute(
-        """
-        SELECT
-            tm.ticker,
-            COUNT(*)                                           AS mention_count,
-            COUNT(DISTINCT CASE WHEN tm.source_type = 'post'
-                                THEN tm.source_id END)         AS unique_posts,
-            MIN(tm.created_utc)                                AS first_seen,
-            MAX(tm.created_utc)                                AS latest_mention
-        FROM ticker_mentions tm
-        WHERE tm.created_utc >= ?
-        GROUP BY tm.ticker
-        ORDER BY mention_count DESC
-        LIMIT ?
-        """,
-        (cutoff, limit),
-    ).fetchall()
+    # ── Main aggregation query (mode-dependent) ──────────────────
+    if count_mode == CountMode.authors:
+        # Union post authors + comment authors, then COUNT(DISTINCT author)
+        rows = db.conn.execute(
+            """
+            SELECT ticker, COUNT(DISTINCT author) AS count,
+                   COUNT(*) AS mention_count,
+                   COUNT(DISTINCT CASE WHEN source_type = 'post'
+                                       THEN source_id END) AS unique_posts,
+                   MIN(created_utc) AS first_seen,
+                   MAX(created_utc) AS latest_mention
+            FROM (
+                SELECT tm.ticker, p.author, tm.source_type, tm.source_id, tm.created_utc
+                FROM ticker_mentions tm
+                JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+                WHERE tm.created_utc >= ?
+                UNION ALL
+                SELECT tm.ticker, c.author, tm.source_type, tm.source_id, tm.created_utc
+                FROM ticker_mentions tm
+                JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+                WHERE tm.created_utc >= ?
+            )
+            GROUP BY ticker
+            ORDER BY count DESC
+            LIMIT ?
+            """,
+            (cutoff, cutoff, limit),
+        ).fetchall()
+    elif count_mode == CountMode.posts:
+        rows = db.conn.execute(
+            """
+            SELECT
+                tm.ticker,
+                COUNT(*)                                           AS count,
+                COUNT(*)                                           AS mention_count,
+                COUNT(DISTINCT tm.source_id)                       AS unique_posts,
+                MIN(tm.created_utc)                                AS first_seen,
+                MAX(tm.created_utc)                                AS latest_mention
+            FROM ticker_mentions tm
+            WHERE tm.created_utc >= ? AND tm.source_type = 'post'
+            GROUP BY tm.ticker
+            ORDER BY count DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+    else:  # mentions (default)
+        rows = db.conn.execute(
+            """
+            SELECT
+                tm.ticker,
+                COUNT(*)                                           AS count,
+                COUNT(*)                                           AS mention_count,
+                COUNT(DISTINCT CASE WHEN tm.source_type = 'post'
+                                    THEN tm.source_id END)         AS unique_posts,
+                MIN(tm.created_utc)                                AS first_seen,
+                MAX(tm.created_utc)                                AS latest_mention
+            FROM ticker_mentions tm
+            WHERE tm.created_utc >= ?
+            GROUP BY tm.ticker
+            ORDER BY count DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
 
     # Collect subreddits per ticker in one pass
     tickers_in_result = [r["ticker"] for r in rows]
@@ -216,30 +278,92 @@ def trending_tickers(
         for sr in sub_rows:
             sub_map.setdefault(sr["ticker"], []).append(sr["subreddit"])
 
-        # Sparkline: time-bucketed mention counts per ticker (ET)
+        # ── Sparkline (mode-dependent bucketing) ─────────────────
         bucket_fmt = _bucket_format(window.value)
-        spark_rows = db.conn.execute(
-            f"""
-            SELECT ticker, created_utc
-            FROM ticker_mentions
-            WHERE created_utc >= ? AND ticker IN ({placeholders})
-            """,
-            [cutoff, *tickers_in_result],
-        ).fetchall()
-        spark_counter: dict[str, Counter] = defaultdict(Counter)
-        for sr in spark_rows:
-            bucket = _et_bucket(sr["created_utc"], bucket_fmt)
-            spark_counter[sr["ticker"]][bucket] += 1
-        for tk, counts in spark_counter.items():
-            sparkline_map[tk] = [
-                {"t": b, "v": c} for b, c in sorted(counts.items())
-            ]
+
+        if count_mode == CountMode.authors:
+            # Bucket by (timestamp, author), then count distinct authors per bucket
+            spark_rows = db.conn.execute(
+                f"""
+                SELECT ticker, created_utc, author FROM (
+                    SELECT tm.ticker, tm.created_utc, p.author
+                    FROM ticker_mentions tm
+                    JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+                    WHERE tm.created_utc >= ? AND tm.ticker IN ({placeholders})
+                    UNION ALL
+                    SELECT tm.ticker, tm.created_utc, c.author
+                    FROM ticker_mentions tm
+                    JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+                    WHERE tm.created_utc >= ? AND tm.ticker IN ({placeholders})
+                )
+                """,
+                [cutoff, *tickers_in_result, cutoff, *tickers_in_result],
+            ).fetchall()
+            # Count distinct authors per (ticker, bucket)
+            spark_sets: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+            for sr in spark_rows:
+                bucket = _et_bucket(sr["created_utc"], bucket_fmt, window.value)
+                spark_sets[sr["ticker"]][bucket].add(sr["author"])
+            for tk, buckets in spark_sets.items():
+                sparkline_map[tk] = [
+                    {"t": b, "v": len(authors)} for b, authors in sorted(buckets.items())
+                ]
+        elif count_mode == CountMode.posts:
+            spark_rows = db.conn.execute(
+                f"""
+                SELECT ticker, created_utc
+                FROM ticker_mentions
+                WHERE created_utc >= ? AND ticker IN ({placeholders})
+                  AND source_type = 'post'
+                """,
+                [cutoff, *tickers_in_result],
+            ).fetchall()
+            spark_counter: dict[str, Counter] = defaultdict(Counter)
+            for sr in spark_rows:
+                bucket = _et_bucket(sr["created_utc"], bucket_fmt, window.value)
+                spark_counter[sr["ticker"]][bucket] += 1
+            for tk, counts in spark_counter.items():
+                sparkline_map[tk] = [
+                    {"t": b, "v": c} for b, c in sorted(counts.items())
+                ]
+        else:  # mentions
+            spark_rows = db.conn.execute(
+                f"""
+                SELECT ticker, created_utc
+                FROM ticker_mentions
+                WHERE created_utc >= ? AND ticker IN ({placeholders})
+                """,
+                [cutoff, *tickers_in_result],
+            ).fetchall()
+            spark_counter: dict[str, Counter] = defaultdict(Counter)
+            for sr in spark_rows:
+                bucket = _et_bucket(sr["created_utc"], bucket_fmt, window.value)
+                spark_counter[sr["ticker"]][bucket] += 1
+            for tk, counts in spark_counter.items():
+                sparkline_map[tk] = [
+                    {"t": b, "v": c} for b, c in sorted(counts.items())
+                ]
 
     # Batch sentiment for all tickers
     sentiment_map = _compute_batch_sentiment(db, tickers_in_result, cutoff)
 
     # Tag lookup
     tag_map = _tag_lookup()
+
+    # Fundamentals lookup (market cap, pct change, price)
+    fundamentals_map: dict[str, dict] = {}
+    if tickers_in_result:
+        fund_rows = db.get_all_latest_fundamentals(tickers_in_result)
+        for fr in fund_rows:
+            fundamentals_map[fr["ticker"]] = {
+                "current_price": fr.get("current_price"),
+                "pct_change_open": fr.get("pct_change_open"),
+                "pct_change_prev": fr.get("pct_change_prev"),
+                "market_cap": fr.get("market_cap"),
+                "volume": fr.get("volume"),
+                "name": fr.get("name"),
+                "sector": fr.get("sector"),
+            }
 
     def _compute_trend(points: list[dict]) -> str:
         """Compare first-half vs second-half mention sums."""
@@ -261,9 +385,11 @@ def trending_tickers(
 
     return {
         "window": window.value,
+        "count_mode": count_mode.value,
         "tickers": [
             {
                 "ticker": r["ticker"],
+                "count": r["count"],
                 "mention_count": r["mention_count"],
                 "unique_posts": r["unique_posts"],
                 "subreddits": sub_map.get(r["ticker"], []),
@@ -273,6 +399,56 @@ def trending_tickers(
                 "trend": _compute_trend(sparkline_map.get(r["ticker"], [])),
                 "sentiment": sentiment_map.get(r["ticker"], {"score": 0, "label": "neutral", "signal_count": 0, "sources": {}, "confidence": "low"}),
                 "tags": tag_map.get(r["ticker"], []),
+                "fundamentals": fundamentals_map.get(r["ticker"]),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/{ticker}/authors")
+def ticker_authors(
+    ticker: str,
+    window: DetailWindow = DetailWindow.d7,
+    limit: int = Query(30, ge=1, le=100),
+    db: RedditDatabase = Depends(get_db),
+):
+    _ensure_indexes(db)
+    cutoff = _cutoff(window.value)
+    ticker_upper = ticker.upper()
+
+    rows = db.conn.execute(
+        """
+        SELECT author, SUM(is_post) AS post_count, SUM(is_comment) AS comment_count,
+               SUM(is_post) + SUM(is_comment) AS total_count
+        FROM (
+            SELECT p.author, 1 AS is_post, 0 AS is_comment
+            FROM ticker_mentions tm
+            JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+            WHERE tm.ticker = ? AND tm.created_utc >= ?
+            UNION ALL
+            SELECT c.author, 0 AS is_post, 1 AS is_comment
+            FROM ticker_mentions tm
+            JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+            WHERE tm.ticker = ? AND tm.created_utc >= ?
+        )
+        WHERE author IS NOT NULL AND author != '[deleted]'
+        GROUP BY author
+        ORDER BY total_count DESC
+        LIMIT ?
+        """,
+        (ticker_upper, cutoff, ticker_upper, cutoff, limit),
+    ).fetchall()
+
+    return {
+        "ticker": ticker_upper,
+        "window": window.value,
+        "authors": [
+            {
+                "author": r["author"],
+                "post_count": r["post_count"],
+                "comment_count": r["comment_count"],
+                "total_count": r["total_count"],
             }
             for r in rows
         ],
@@ -283,6 +459,7 @@ def trending_tickers(
 def ticker_detail(
     ticker: str,
     window: DetailWindow = DetailWindow.d7,
+    count_mode: CountMode = CountMode.mentions,
     db: RedditDatabase = Depends(get_db),
 ):
     _ensure_indexes(db)
@@ -290,49 +467,143 @@ def ticker_detail(
     ticker_upper = ticker.upper()
     bucket_fmt = _bucket_format(window.value)
 
-    # Total mentions + unique posts
-    agg = db.conn.execute(
-        """
-        SELECT COUNT(*) AS cnt,
-               COUNT(DISTINCT CASE WHEN source_type = 'post' THEN source_id END) AS unique_posts
-        FROM ticker_mentions WHERE ticker = ? AND created_utc >= ?
-        """,
-        (ticker_upper, cutoff),
-    ).fetchone()
-    total = agg["cnt"]
-    unique_posts = agg["unique_posts"]
+    if count_mode == CountMode.authors:
+        # ── Authors mode: COUNT(DISTINCT author) ──────────────
+        # Fetch all rows with author info for aggregation
+        all_rows = db.conn.execute(
+            """
+            SELECT subreddit, created_utc, author, source_type, source_id FROM (
+                SELECT tm.subreddit, tm.created_utc, p.author,
+                       tm.source_type, tm.source_id
+                FROM ticker_mentions tm
+                JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+                WHERE tm.ticker = ? AND tm.created_utc >= ?
+                UNION ALL
+                SELECT tm.subreddit, tm.created_utc, c.author,
+                       tm.source_type, tm.source_id
+                FROM ticker_mentions tm
+                JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+                WHERE tm.ticker = ? AND tm.created_utc >= ?
+            )
+            """,
+            (ticker_upper, cutoff, ticker_upper, cutoff),
+        ).fetchall()
 
-    # By subreddit
-    by_sub = db.conn.execute(
-        """
-        SELECT subreddit, COUNT(*) AS cnt
-        FROM ticker_mentions
-        WHERE ticker = ? AND created_utc >= ?
-        GROUP BY subreddit
-        ORDER BY cnt DESC
-        """,
-        (ticker_upper, cutoff),
-    ).fetchall()
+        # Total distinct authors + unique posts
+        all_authors = set()
+        post_ids = set()
+        for r in all_rows:
+            if r["author"]:
+                all_authors.add(r["author"])
+            if r["source_type"] == "post":
+                post_ids.add(r["source_id"])
+        total = len(all_authors)
+        unique_posts = len(post_ids)
 
-    # Over time (bucketed in ET)
-    time_rows = db.conn.execute(
-        """
-        SELECT created_utc, subreddit
-        FROM ticker_mentions
-        WHERE ticker = ? AND created_utc >= ?
-        """,
-        (ticker_upper, cutoff),
-    ).fetchall()
+        # By subreddit: distinct authors per sub
+        sub_authors: dict[str, set] = defaultdict(set)
+        for r in all_rows:
+            if r["author"]:
+                sub_authors[r["subreddit"]].add(r["author"])
+        by_sub_dict = {sub: len(authors) for sub, authors in sub_authors.items()}
+        by_sub_dict = dict(sorted(by_sub_dict.items(), key=lambda x: -x[1]))
 
-    time_counter: dict[tuple[str, str], int] = Counter()
-    for r in time_rows:
-        bucket = _et_bucket(r["created_utc"], bucket_fmt)
-        time_counter[(bucket, r["subreddit"])] += 1
+        # Over time: distinct authors per (bucket, subreddit)
+        bucket_sub_authors: dict[tuple[str, str], set] = defaultdict(set)
+        for r in all_rows:
+            bucket = _et_bucket(r["created_utc"], bucket_fmt, window.value)
+            if r["author"]:
+                bucket_sub_authors[(bucket, r["subreddit"])].add(r["author"])
+        over_time = sorted(
+            [{"timestamp": k[0], "subreddit": k[1], "count": len(v)}
+             for k, v in bucket_sub_authors.items()],
+            key=lambda x: x["timestamp"],
+        )
 
-    over_time = sorted(
-        [{"timestamp": k[0], "subreddit": k[1], "count": v} for k, v in time_counter.items()],
-        key=lambda x: x["timestamp"],
-    )
+    elif count_mode == CountMode.posts:
+        # ── Posts mode: only source_type = 'post' ─────────────
+        agg = db.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt,
+                   COUNT(DISTINCT source_id) AS unique_posts
+            FROM ticker_mentions
+            WHERE ticker = ? AND created_utc >= ? AND source_type = 'post'
+            """,
+            (ticker_upper, cutoff),
+        ).fetchone()
+        total = agg["cnt"]
+        unique_posts = agg["unique_posts"]
+
+        by_sub = db.conn.execute(
+            """
+            SELECT subreddit, COUNT(*) AS cnt
+            FROM ticker_mentions
+            WHERE ticker = ? AND created_utc >= ? AND source_type = 'post'
+            GROUP BY subreddit ORDER BY cnt DESC
+            """,
+            (ticker_upper, cutoff),
+        ).fetchall()
+        by_sub_dict = {r["subreddit"]: r["cnt"] for r in by_sub}
+
+        time_rows = db.conn.execute(
+            """
+            SELECT created_utc, subreddit
+            FROM ticker_mentions
+            WHERE ticker = ? AND created_utc >= ? AND source_type = 'post'
+            """,
+            (ticker_upper, cutoff),
+        ).fetchall()
+        time_counter: dict[tuple[str, str], int] = Counter()
+        for r in time_rows:
+            bucket = _et_bucket(r["created_utc"], bucket_fmt, window.value)
+            time_counter[(bucket, r["subreddit"])] += 1
+        over_time = sorted(
+            [{"timestamp": k[0], "subreddit": k[1], "count": v}
+             for k, v in time_counter.items()],
+            key=lambda x: x["timestamp"],
+        )
+
+    else:
+        # ── Mentions mode (default) ──────────────────────────
+        agg = db.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt,
+                   COUNT(DISTINCT CASE WHEN source_type = 'post' THEN source_id END) AS unique_posts
+            FROM ticker_mentions WHERE ticker = ? AND created_utc >= ?
+            """,
+            (ticker_upper, cutoff),
+        ).fetchone()
+        total = agg["cnt"]
+        unique_posts = agg["unique_posts"]
+
+        by_sub = db.conn.execute(
+            """
+            SELECT subreddit, COUNT(*) AS cnt
+            FROM ticker_mentions
+            WHERE ticker = ? AND created_utc >= ?
+            GROUP BY subreddit ORDER BY cnt DESC
+            """,
+            (ticker_upper, cutoff),
+        ).fetchall()
+        by_sub_dict = {r["subreddit"]: r["cnt"] for r in by_sub}
+
+        time_rows = db.conn.execute(
+            """
+            SELECT created_utc, subreddit
+            FROM ticker_mentions
+            WHERE ticker = ? AND created_utc >= ?
+            """,
+            (ticker_upper, cutoff),
+        ).fetchall()
+        time_counter: dict[tuple[str, str], int] = Counter()
+        for r in time_rows:
+            bucket = _et_bucket(r["created_utc"], bucket_fmt, window.value)
+            time_counter[(bucket, r["subreddit"])] += 1
+        over_time = sorted(
+            [{"timestamp": k[0], "subreddit": k[1], "count": v}
+             for k, v in time_counter.items()],
+            key=lambda x: x["timestamp"],
+        )
 
     sentiment = _compute_ticker_sentiment(db, ticker_upper, cutoff)
     tag_map = _tag_lookup()
@@ -340,10 +611,11 @@ def ticker_detail(
     return {
         "ticker": ticker_upper,
         "window": window.value,
+        "count_mode": count_mode.value,
         "total_mentions": total,
         "unique_posts": unique_posts,
         "sentiment": sentiment,
         "tags": tag_map.get(ticker_upper, []),
-        "mentions_by_subreddit": {r["subreddit"]: r["cnt"] for r in by_sub},
+        "mentions_by_subreddit": by_sub_dict,
         "mentions_over_time": over_time,
     }

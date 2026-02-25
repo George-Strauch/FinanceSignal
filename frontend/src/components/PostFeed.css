@@ -56,6 +56,78 @@
   color: rgb(var(--accent));
 }
 
+/* ── Date Filter Bar ─────────────────────────────────────────── */
+
+.pf-date-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pf-date-presets {
+  display: flex;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pf-date-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-date-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+}
+
+.pf-date-input {
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  color: rgb(var(--hard-text));
+  color-scheme: dark;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pf-date-input:focus {
+  border-color: rgba(var(--accent), 0.5);
+}
+
+.pf-date-clear {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.pf-date-clear:hover {
+  border-color: rgba(var(--color-error), 0.5);
+  color: rgb(var(--color-error));
+}
+
+@media (max-width: 640px) {
+  .pf-date-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 /* ── Post Card ────────────────────────────────────────────────── */
 
 .post-card {
@@ -128,6 +200,16 @@
 
 .post-card-author {
   font-weight: 500;
+}
+
+.post-card-author-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.post-card-author-link:hover {
+  color: rgb(var(--accent));
 }
 
 .post-card-stat {

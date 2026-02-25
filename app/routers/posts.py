@@ -49,13 +49,17 @@ def _post_summary(row, tickers: list[str]) -> dict:
 def list_posts(
     ticker: str | None = Query(None),
     subreddit: str | None = Query(None),
+    entity: str | None = Query(None, description="Filter by named entity text"),
+    author: str | None = Query(None, description="Filter by post author"),
+    date_from: float | None = Query(None, description="Unix timestamp, inclusive lower bound"),
+    date_to: float | None = Query(None, description="Unix timestamp, exclusive upper bound"),
     page: int = Query(1, ge=1),
     per_page: int = Query(25, ge=1, le=100),
     sort: SortOrder = SortOrder.date,
     db: RedditDatabase = Depends(get_db),
 ):
-    if not ticker and not subreddit:
-        raise HTTPException(status_code=422, detail="At least one of 'ticker' or 'subreddit' is required.")
+    if not ticker and not subreddit and not entity and not author:
+        raise HTTPException(status_code=422, detail="At least one of 'ticker', 'subreddit', 'entity', or 'author' is required.")
 
     where_clauses: list[str] = []
     params: list = []
@@ -66,9 +70,25 @@ def list_posts(
         where_clauses.append("tm.ticker = ?")
         params.append(ticker.upper())
 
+    if entity:
+        join = "JOIN named_entities ne ON ne.source_type = 'post' AND ne.source_id = p.id"
+        where_clauses.append("ne.entity_text = ?")
+        params.append(entity)
+
     if subreddit:
         where_clauses.append("p.subreddit = ?")
         params.append(subreddit)
+
+    if author:
+        where_clauses.append("p.author = ?")
+        params.append(author)
+
+    if date_from is not None:
+        where_clauses.append("p.created_utc >= ?")
+        params.append(date_from)
+    if date_to is not None:
+        where_clauses.append("p.created_utc < ?")
+        params.append(date_to)
 
     where = "WHERE " + " AND ".join(where_clauses)
     order = SORT_COLUMNS[sort.value]

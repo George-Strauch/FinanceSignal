@@ -107,12 +107,14 @@ async def run_scraper_cycle(state: ScraperState):
 
 
 def _fetch_subreddit(subreddit: str, state: ScraperState):
-    """Fetch one page of new posts for a subreddit (runs in thread)."""
+    """Fetch one page of new posts for a subreddit, then refresh comments for
+    all posts from the last 24 hours (runs in thread)."""
     fetcher = RedditFetcher(min_interval=state.request_delay)
     fetch_start = time.time()
     total_new = 0
     total_updated = 0
     total_comments = 0
+    new_post_ids: set[str] = set()
 
     with RedditDatabase() as db:
         response = fetcher.fetch_new_posts(subreddit, limit=DEFAULT_PAGE_LIMIT)
@@ -126,6 +128,7 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
                 was_new = db.upsert_post(raw_post, subreddit)
                 if was_new:
                     total_new += 1
+                    new_post_ids.add(post_id)
                     media_links = fetcher.extract_media_links(raw_post)
                     if media_links:
                         db.save_media_links(post_id, media_links)
@@ -141,6 +144,39 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
                     total_updated += 1
             except Exception:
                 logger.exception("Post processing failed in r/%s", subreddit)
+                state.errors_this_cycle += 1
+
+        # ── Refresh comments for recent posts (last 24h) ──────────────
+        # New posts already had their comments fetched above, so only
+        # re-fetch for older posts that were discovered in previous cycles.
+        cutoff_24h = time.time() - 86400
+        recent_rows = db.conn.execute(
+            """
+            SELECT id FROM posts
+            WHERE subreddit = ? AND created_utc >= ?
+            ORDER BY created_utc DESC
+            """,
+            (subreddit, cutoff_24h),
+        ).fetchall()
+
+        refresh_ids = [r["id"] for r in recent_rows if r["id"] not in new_post_ids]
+
+        if refresh_ids:
+            logger.info(
+                "r/%s — refreshing comments for %d recent posts",
+                subreddit, len(refresh_ids),
+            )
+
+        for post_id in refresh_ids:
+            if state._stop_event.is_set():
+                break
+            try:
+                comments = fetcher.fetch_post_comments(subreddit, post_id)
+                for comment in comments:
+                    db.upsert_comment(comment, post_id)
+                total_comments += len(comments)
+            except Exception:
+                logger.exception("Comment refresh failed for %s", post_id)
                 state.errors_this_cycle += 1
 
         duration = time.time() - fetch_start

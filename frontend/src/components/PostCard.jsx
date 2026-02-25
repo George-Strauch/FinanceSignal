@@ -73,7 +73,13 @@ export default function PostCard({ post, highlightTicker }) {
         {post.sentiment_label && post.sentiment_label !== 'neutral' && (
           <span className={`post-card-sentiment-dot sentiment-dot-${post.sentiment_label}`} title={post.sentiment_label} />
         )}
-        <span className="post-card-author">u/{post.author}</span>
+        {post.author && post.author !== '[deleted]' ? (
+          <Link to={`/authors/${post.author}`} className="post-card-author post-card-author-link" onClick={(e) => e.stopPropagation()}>
+            u/{post.author}
+          </Link>
+        ) : (
+          <span className="post-card-author">u/{post.author}</span>
+        )}
         <span className="post-card-stat">
           <FiArrowUp /> {post.score}
         </span>

@@ -44,7 +44,8 @@
 /* ── Window Selector ──────────────────────────────────────────── */
 
 .window-selector,
-.limit-selector {
+.limit-selector,
+.count-mode-selector {
   display: flex;
   border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
   border-radius: 8px;
@@ -406,6 +407,68 @@
 .sentiment-neutral {
   background: rgba(var(--soft-text), 0.1);
   color: rgb(var(--soft-text));
+}
+
+/* ── Fundamentals in cards ────────────────────────────────────── */
+
+.ticker-card-name {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticker-card-fundamentals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.82rem;
+}
+
+.ticker-card-price {
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+}
+
+.ticker-card-mcap {
+  color: rgb(var(--soft-text));
+  font-size: 0.75rem;
+}
+
+.pct-positive {
+  color: rgb(52, 211, 153);
+  font-weight: 600;
+}
+
+.pct-negative {
+  color: rgb(248, 113, 113);
+  font-weight: 600;
+}
+
+.text-muted {
+  color: rgb(var(--soft-text));
+}
+
+/* ── Table fundamentals columns ──────────────────────────────── */
+
+.num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.table-ticker-name {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: rgb(var(--soft-text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
 }
 
 /* ── Error ─────────────────────────────────────────────────── */

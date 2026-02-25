@@ -385,6 +385,16 @@ class ProcessManager:
                 state.request_delay = float(params["request_delay_seconds"])
             return state
 
+        if proc.id == "ner_extraction":
+            from app.ner_processor import NERState
+            if proc.job_state is not None and isinstance(proc.job_state, NERState):
+                state = proc.job_state
+            else:
+                state = NERState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            return state
+
         if proc.id == "backfetch":
             from app.backfetch import BackfetchState, _parse_subreddits
             params = proc.current_params
@@ -392,6 +402,19 @@ class ProcessManager:
             state._stop_event = proc._stop_event
             state.log_buffer = proc.log_buffer
             state.subreddits = _parse_subreddits(str(params.get("subreddits", "")))
+            if "request_delay_seconds" in params:
+                state.request_delay = float(params["request_delay_seconds"])
+            return state
+
+        if proc.id == "fundamentals_fetcher":
+            from app.fundamentals import FundamentalsState
+            if proc.job_state is not None and isinstance(proc.job_state, FundamentalsState):
+                state = proc.job_state
+            else:
+                state = FundamentalsState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            params = proc.current_params
             if "request_delay_seconds" in params:
                 state.request_delay = float(params["request_delay_seconds"])
             return state

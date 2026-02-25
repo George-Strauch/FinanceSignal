@@ -8,6 +8,11 @@ import './TrendingDashboard.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d']
 const LIMIT_OPTIONS = [20, 50, 100]
+const COUNT_MODES = [
+  { value: 'mentions', label: 'Mentions' },
+  { value: 'authors', label: 'Authors' },
+  { value: 'posts', label: 'Posts' },
+]
 const REFRESH_INTERVAL = 60
 
 function SparklineChart({ data, id }) {
@@ -52,15 +57,55 @@ function SentimentBadge({ sentiment }) {
   )
 }
 
-function TickerCard({ ticker, onClick }) {
+function formatPrice(v) {
+  if (v == null) return '-'
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function formatLargeNum(n) {
+  if (n == null) return '-'
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`
+  return `$${n.toLocaleString()}`
+}
+
+function formatPct(v) {
+  if (v == null) return '-'
+  const sign = v >= 0 ? '+' : ''
+  return `${sign}${v.toFixed(2)}%`
+}
+
+function PctCell({ value }) {
+  if (value == null) return <span className="text-muted">-</span>
+  const cls = value >= 0 ? 'pct-positive' : 'pct-negative'
+  return <span className={cls}>{formatPct(value)}</span>
+}
+
+function TickerCard({ ticker, countModeLabel, onClick }) {
+  const f = ticker.fundamentals
   return (
     <div className="ticker-card" onClick={onClick} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onClick()}>
       <div className="ticker-card-header">
         <span className="ticker-symbol">{ticker.ticker}</span>
         <TrendIcon trend={ticker.trend} />
       </div>
+      {f?.name && <div className="ticker-card-name">{f.name}</div>}
       <SentimentBadge sentiment={ticker.sentiment} />
-      <div className="ticker-card-mentions">{ticker.mention_count.toLocaleString()} mentions</div>
+      <div className="ticker-card-mentions">{ticker.count.toLocaleString()} {countModeLabel}</div>
+      {f && (
+        <div className="ticker-card-fundamentals">
+          {f.current_price != null && (
+            <span className="ticker-card-price">{formatPrice(f.current_price)}</span>
+          )}
+          {f.pct_change_prev != null && (
+            <PctCell value={f.pct_change_prev} />
+          )}
+          {f.market_cap != null && (
+            <span className="ticker-card-mcap">{formatLargeNum(f.market_cap)}</span>
+          )}
+        </div>
+      )}
       <div className="ticker-card-sparkline">
         <SparklineChart data={ticker.sparkline} id={ticker.ticker} />
       </div>
@@ -99,10 +144,11 @@ export default function TrendingDashboard() {
   const [error, setError] = useState(null)
   const [window, setWindow] = usePersistedState('trending-window', '24h')
   const [limit, setLimit] = usePersistedState('trending-limit', 20)
+  const [countMode, setCountMode] = usePersistedState('count-mode', 'mentions')
   const [viewMode, setViewMode] = usePersistedState('trending-view', 'cards')
   const [autoRefresh, setAutoRefresh] = usePersistedState('trending-autorefresh', false)
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL)
-  const [sortKey, setSortKey] = useState('mention_count')
+  const [sortKey, setSortKey] = useState('count')
   const [sortDir, setSortDir] = useState('desc')
   const [refreshing, setRefreshing] = useState(false)
   const [hiddenTags, setHiddenTags] = usePersistedState('trending-hidden-tags', [])
@@ -111,12 +157,14 @@ export default function TrendingDashboard() {
   const filterRef = useRef(null)
   const intervalRef = useRef(null)
 
+  const countModeLabel = COUNT_MODES.find((m) => m.value === countMode)?.label.toLowerCase() || 'mentions'
+
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
     setError(null)
     try {
-      const res = await get(`/tickers/trending?window=${window}&limit=${limit}`)
+      const res = await get(`/tickers/trending?window=${window}&limit=${limit}&count_mode=${countMode}`)
       setData(res)
     } catch (err) {
       setError(err.message)
@@ -124,7 +172,7 @@ export default function TrendingDashboard() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [window, limit])
+  }, [window, limit, countMode])
 
   // Fetch on mount + window change
   useEffect(() => {
@@ -189,13 +237,24 @@ export default function TrendingDashboard() {
 
   const sortedTickers = filteredTickers.length > 0
     ? [...filteredTickers].sort((a, b) => {
-        let aVal = a[sortKey]
-        let bVal = b[sortKey]
+        let aVal, bVal
+        // Fundamentals fields are nested under .fundamentals
+        const fundKeys = ['current_price', 'pct_change_prev', 'pct_change_open', 'market_cap', 'volume']
+        if (fundKeys.includes(sortKey)) {
+          aVal = a.fundamentals?.[sortKey]
+          bVal = b.fundamentals?.[sortKey]
+        } else {
+          aVal = a[sortKey]
+          bVal = b[sortKey]
+        }
         if (sortKey === 'ticker') {
-          aVal = aVal.toLowerCase()
-          bVal = bVal.toLowerCase()
+          aVal = (aVal || '').toLowerCase()
+          bVal = (bVal || '').toLowerCase()
           return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
         }
+        // Treat null/undefined as -Infinity for numeric sorts
+        if (aVal == null) aVal = -Infinity
+        if (bVal == null) bVal = -Infinity
         return sortDir === 'asc' ? aVal - bVal : bVal - aVal
       })
     : filteredTickers
@@ -235,6 +294,17 @@ export default function TrendingDashboard() {
                 onClick={() => setLimit(n)}
               >
                 {n}
+              </button>
+            ))}
+          </div>
+          <div className="count-mode-selector">
+            {COUNT_MODES.map((m) => (
+              <button
+                key={m.value}
+                className={`window-btn ${countMode === m.value ? 'active' : ''}`}
+                onClick={() => setCountMode(m.value)}
+              >
+                {m.label}
               </button>
             ))}
           </div>
@@ -317,6 +387,7 @@ export default function TrendingDashboard() {
             <TickerCard
               key={t.ticker}
               ticker={t}
+              countModeLabel={countModeLabel}
               onClick={() => navigate(`/tickers/${t.ticker}`)}
             />
           ))}
@@ -332,8 +403,17 @@ export default function TrendingDashboard() {
                 <th className="sortable" onClick={() => handleSort('ticker')}>
                   Ticker{sortIndicator('ticker')}
                 </th>
-                <th className="sortable" onClick={() => handleSort('mention_count')}>
-                  Mentions{sortIndicator('mention_count')}
+                <th className="sortable num-col" onClick={() => handleSort('current_price')}>
+                  Price{sortIndicator('current_price')}
+                </th>
+                <th className="sortable num-col" onClick={() => handleSort('pct_change_prev')}>
+                  Chg%{sortIndicator('pct_change_prev')}
+                </th>
+                <th className="sortable num-col" onClick={() => handleSort('market_cap')}>
+                  Mkt Cap{sortIndicator('market_cap')}
+                </th>
+                <th className="sortable num-col" onClick={() => handleSort('count')}>
+                  {COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'}{sortIndicator('count')}
                 </th>
                 <th>Tags</th>
                 <th>Sparkline</th>
@@ -342,27 +422,36 @@ export default function TrendingDashboard() {
               </tr>
             </thead>
             <tbody>
-              {sortedTickers.map((t, i) => (
-                <tr key={t.ticker} onClick={() => navigate(`/tickers/${t.ticker}`)} className="clickable-row">
-                  <td className="rank-cell">{i + 1}</td>
-                  <td className="ticker-cell">{t.ticker}</td>
-                  <td>{t.mention_count.toLocaleString()}</td>
-                  <td>
-                    <div className="table-tags">
-                      {t.tags?.map((tag) => (
-                        <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
-                          {tag.name}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td>
-                    <SparklineChart data={t.sparkline} id={`tbl-${t.ticker}`} />
-                  </td>
-                  <td><TrendIcon trend={t.trend} /></td>
-                  <td><SentimentBadge sentiment={t.sentiment} /></td>
-                </tr>
-              ))}
+              {sortedTickers.map((t, i) => {
+                const f = t.fundamentals
+                return (
+                  <tr key={t.ticker} onClick={() => navigate(`/tickers/${t.ticker}`)} className="clickable-row">
+                    <td className="rank-cell">{i + 1}</td>
+                    <td className="ticker-cell">
+                      {t.ticker}
+                      {f?.name && <span className="table-ticker-name">{f.name}</span>}
+                    </td>
+                    <td className="num-col">{f?.current_price != null ? formatPrice(f.current_price) : '-'}</td>
+                    <td className="num-col"><PctCell value={f?.pct_change_prev} /></td>
+                    <td className="num-col">{f?.market_cap != null ? formatLargeNum(f.market_cap) : '-'}</td>
+                    <td className="num-col">{t.count.toLocaleString()}</td>
+                    <td>
+                      <div className="table-tags">
+                        {t.tags?.map((tag) => (
+                          <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
+                            {tag.name}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      <SparklineChart data={t.sparkline} id={`tbl-${t.ticker}`} />
+                    </td>
+                    <td><TrendIcon trend={t.trend} /></td>
+                    <td><SentimentBadge sentiment={t.sentiment} /></td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -1,16 +1,27 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts'
 import { get, post, del } from '../api/client'
+import usePersistedState from '../hooks/usePersistedState'
 import './RedditSource.css'
 
 const NAME_RE = /^[A-Za-z0-9_]{1,21}$/
+const WINDOWS = ['7d', '30d', '90d', 'all']
+const AUTHOR_SORTS = [
+  { key: 'combined', label: 'Combined' },
+  { key: 'post_count', label: 'Posts' },
+  { key: 'comment_count', label: 'Comments' },
+  { key: 'avg_post_score', label: 'Avg Score' },
+]
 
 function extractApiError(msg) {
   try { return JSON.parse(msg.slice(msg.indexOf('{'))).detail } catch { return msg }
 }
 
 function formatTime(iso) {
-  if (!iso) return '—'
+  if (!iso) return '\u2014'
   const d = new Date(iso)
   const now = new Date()
   const diff = Math.floor((now - d) / 1000)
@@ -20,7 +31,19 @@ function formatTime(iso) {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+function formatTimestamp(ts) {
+  if (!ts) return ''
+  if (ts.length <= 10) return ts
+  return ts.slice(5, 10) + ' ' + ts.slice(11, 16)
+}
+
+function formatNum(n) {
+  if (n == null) return '\u2014'
+  return Number(n).toLocaleString()
+}
+
 export default function RedditSource() {
+  const [window, setWindow] = usePersistedState('reddit-source-window', '30d')
   const [subreddits, setSubreddits] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -31,6 +54,15 @@ export default function RedditSource() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [sortKey, setSortKey] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
+
+  // Analytics state
+  const [overview, setOverview] = useState(null)
+  const [overviewLoading, setOverviewLoading] = useState(true)
+  const [activityData, setActivityData] = useState(null)
+  const [activityLoading, setActivityLoading] = useState(true)
+  const [authors, setAuthors] = useState(null)
+  const [authorsLoading, setAuthorsLoading] = useState(true)
+  const [authorSort, setAuthorSort] = usePersistedState('reddit-author-sort', 'combined')
 
   const fetchSubreddits = useCallback(async () => {
     try {
@@ -44,15 +76,43 @@ export default function RedditSource() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchSubreddits()
-  }, [fetchSubreddits])
+  const fetchOverview = useCallback(async () => {
+    setOverviewLoading(true)
+    try {
+      const data = await get(`/reddit-stats/overview?window=${window}`)
+      setOverview(data)
+    } catch { setOverview(null) }
+    finally { setOverviewLoading(false) }
+  }, [window])
+
+  const fetchActivity = useCallback(async () => {
+    setActivityLoading(true)
+    try {
+      const data = await get(`/reddit-stats/activity?window=${window}`)
+      setActivityData(data)
+    } catch { setActivityData(null) }
+    finally { setActivityLoading(false) }
+  }, [window])
+
+  const fetchAuthors = useCallback(async () => {
+    setAuthorsLoading(true)
+    try {
+      const data = await get(`/reddit-stats/top-authors?window=${window}&sort_by=${authorSort}&limit=15`)
+      setAuthors(data)
+    } catch { setAuthors(null) }
+    finally { setAuthorsLoading(false) }
+  }, [window, authorSort])
+
+  useEffect(() => { fetchSubreddits() }, [fetchSubreddits])
+  useEffect(() => { fetchOverview() }, [fetchOverview])
+  useEffect(() => { fetchActivity() }, [fetchActivity])
+  useEffect(() => { fetchAuthors() }, [fetchAuthors])
 
   const handleAdd = async (e) => {
     e.preventDefault()
     const name = newName.trim()
     if (!NAME_RE.test(name)) {
-      setAddError('Must be 1–21 alphanumeric/underscore characters')
+      setAddError('Must be 1\u201321 alphanumeric/underscore characters')
       return
     }
     setAddLoading(true)
@@ -94,7 +154,7 @@ export default function RedditSource() {
 
   const sortIndicator = (key) => {
     if (sortKey !== key) return ''
-    return sortDir === 'asc' ? ' ▲' : ' ▼'
+    return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
   }
 
   const sorted = [...subreddits].sort((a, b) => {
@@ -112,11 +172,6 @@ export default function RedditSource() {
     return sortDir === 'asc' ? (aVal || 0) - (bVal || 0) : (bVal || 0) - (aVal || 0)
   })
 
-  const totalPosts = subreddits.reduce((s, r) => s + r.post_count, 0)
-  const mostActive = subreddits.length
-    ? [...subreddits].sort((a, b) => b.post_count - a.post_count)[0]
-    : null
-
   const nameValid = newName.trim() === '' || NAME_RE.test(newName.trim())
 
   return (
@@ -127,37 +182,176 @@ export default function RedditSource() {
         <span className="breadcrumb-current">Reddit</span>
       </nav>
 
-      <h1>Reddit Subreddits</h1>
+      <div className="rs-header">
+        <h1>Reddit Analytics</h1>
+        <div className="rs-window-selector">
+          {WINDOWS.map((w) => (
+            <button
+              key={w}
+              className={`window-btn ${window === w ? 'active' : ''}`}
+              onClick={() => setWindow(w)}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {/* Stats */}
-      <div className="sub-stats-grid">
-        <div className="dash-card">
-          <h2>Total Subreddits</h2>
-          <div className="stats-grid">
-            <div className="stat-item">
-              <div className="stat-value">{subreddits.length}</div>
-              <div className="stat-label">configured</div>
+      {/* Stat Cards */}
+      <div className="rs-stats-grid">
+        {overviewLoading && !overview ? (
+          [...Array(6)].map((_, i) => (
+            <div key={i} className="rs-stat-card">
+              <div className="skel-line" style={{ height: 28, width: '60%', margin: '0 auto 6px' }} />
+              <div className="skel-line" style={{ height: 12, width: '50%', margin: '0 auto' }} />
             </div>
+          ))
+        ) : overview && (
+          <>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{formatNum(overview.total_posts)}</div>
+              <div className="rs-stat-label">Total Posts</div>
+            </div>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{formatNum(overview.total_comments)}</div>
+              <div className="rs-stat-label">Total Comments</div>
+            </div>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{formatNum(overview.unique_post_authors)}</div>
+              <div className="rs-stat-label">Unique Authors</div>
+            </div>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{subreddits.length}</div>
+              <div className="rs-stat-label">Subreddits</div>
+            </div>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{overview.avg_posts_per_day}</div>
+              <div className="rs-stat-label">Avg Posts/Day</div>
+            </div>
+            <div className="rs-stat-card">
+              <div className="rs-stat-value">{overview.avg_score}</div>
+              <div className="rs-stat-label">Avg Score</div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Activity Chart */}
+      <div className="rs-chart-section">
+        <h2>Activity Over Time</h2>
+        {activityLoading && !activityData && (
+          <div className="rs-chart-skeleton">
+            <div className="skel-line skel-chart-area" />
+          </div>
+        )}
+        {activityData && activityData.timeline.length === 0 && (
+          <p className="rs-no-data">No activity data for this window.</p>
+        )}
+        {activityData && activityData.timeline.length > 0 && (
+          <div className="rs-chart">
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={activityData.timeline} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={formatTimestamp}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                  minTickGap={40}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: 'rgb(var(--primary-color))',
+                    border: '1px solid rgba(var(--soft-border), var(--soft-border-alpha))',
+                    borderRadius: 8,
+                    fontSize: '0.82rem',
+                  }}
+                  labelFormatter={formatTimestamp}
+                />
+                <Legend wrapperStyle={{ fontSize: '0.8rem' }} />
+                <Area
+                  type="monotone"
+                  dataKey="posts"
+                  stackId="1"
+                  stroke="rgb(99, 102, 241)"
+                  fill="rgba(99, 102, 241, 0.4)"
+                  isAnimationActive={false}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="comments"
+                  stackId="1"
+                  stroke="rgb(244, 114, 182)"
+                  fill="rgba(244, 114, 182, 0.4)"
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Top Contributors */}
+      <div className="rs-authors-section">
+        <div className="rs-authors-header">
+          <h2>Top Contributors</h2>
+          <div className="rs-author-sort-tabs">
+            {AUTHOR_SORTS.map((s) => (
+              <button
+                key={s.key}
+                className={`rs-sort-tab ${authorSort === s.key ? 'active' : ''}`}
+                onClick={() => setAuthorSort(s.key)}
+              >
+                {s.label}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="dash-card">
-          <h2>Total Posts</h2>
-          <div className="stats-grid">
-            <div className="stat-item">
-              <div className="stat-value">{totalPosts.toLocaleString()}</div>
-              <div className="stat-label">collected</div>
-            </div>
+        {authorsLoading && !authors && (
+          <div className="rs-authors-skeleton">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="skel-line" style={{ height: 36, marginBottom: 6 }} />
+            ))}
           </div>
-        </div>
-        <div className="dash-card">
-          <h2>Most Active</h2>
-          <div className="stats-grid">
-            <div className="stat-item">
-              <div className="stat-value">{mostActive ? `r/${mostActive.name}` : '—'}</div>
-              <div className="stat-label">{mostActive ? `${mostActive.post_count.toLocaleString()} posts` : ''}</div>
-            </div>
+        )}
+        {authors && authors.authors.length === 0 && (
+          <p className="rs-no-data">No author data for this window.</p>
+        )}
+        {authors && authors.authors.length > 0 && (
+          <div className="rs-authors-table-wrap">
+            <table className="rs-authors-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Author</th>
+                  <th>Posts</th>
+                  <th>Comments</th>
+                  <th>Combined</th>
+                  <th>Avg Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {authors.authors.map((a, i) => (
+                  <tr key={a.author}>
+                    <td className="rs-rank">{i + 1}</td>
+                    <td className="rs-author-name">
+                      <Link to={`/authors/${a.author}`}>u/{a.author}</Link>
+                    </td>
+                    <td>{a.post_count.toLocaleString()}</td>
+                    <td>{a.comment_count.toLocaleString()}</td>
+                    <td className="rs-combined">{a.combined.toLocaleString()}</td>
+                    <td>{a.avg_post_score}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Add Form */}
@@ -185,7 +379,7 @@ export default function RedditSource() {
             </button>
           </div>
           {!nameValid && (
-            <div className="sub-add-error">Must be 1–21 alphanumeric/underscore characters</div>
+            <div className="sub-add-error">Must be 1\u201321 alphanumeric/underscore characters</div>
           )}
           {addError && <div className="sub-add-error">{addError}</div>}
         </form>
@@ -221,7 +415,11 @@ export default function RedditSource() {
               <tbody>
                 {sorted.map((sub) => (
                   <tr key={sub.name}>
-                    <td className="sub-name-cell">r/{sub.name}</td>
+                    <td className="sub-name-cell">
+                      <Link to={`/sources/reddit/${sub.name}`} className="sub-name-link">
+                        r/{sub.name}
+                      </Link>
+                    </td>
                     <td>{sub.post_count.toLocaleString()}</td>
                     <td title={sub.last_fetched_at || ''}>{formatTime(sub.last_fetched_at)}</td>
                     <td>

@@ -174,6 +174,189 @@ class RedditDatabase:
                 processed_at REAL NOT NULL,
                 PRIMARY KEY (source_type, source_id)
             );
+
+            CREATE TABLE IF NOT EXISTS named_entities (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type     TEXT NOT NULL,
+                source_id       TEXT NOT NULL,
+                entity_text     TEXT NOT NULL,
+                entity_label    TEXT NOT NULL,
+                subreddit       TEXT,
+                created_utc     REAL,
+                discovered_at   REAL NOT NULL,
+                UNIQUE(source_type, source_id, entity_text, entity_label)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ne_entity_text ON named_entities(entity_text);
+            CREATE INDEX IF NOT EXISTS idx_ne_entity_label ON named_entities(entity_label);
+            CREATE INDEX IF NOT EXISTS idx_ne_created ON named_entities(created_utc);
+
+            CREATE TABLE IF NOT EXISTS ner_processed_sources (
+                source_type TEXT NOT NULL,
+                source_id   TEXT NOT NULL,
+                processed_at REAL NOT NULL,
+                PRIMARY KEY (source_type, source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ticker_fundamentals (
+                ticker              TEXT NOT NULL,
+                fetched_at          REAL NOT NULL,
+
+                -- Price & change
+                current_price       REAL,
+                previous_close      REAL,
+                open_price          REAL,
+                day_high            REAL,
+                day_low             REAL,
+                pct_change_open     REAL,
+                pct_change_prev     REAL,
+
+                -- Volume
+                volume              INTEGER,
+                avg_volume          INTEGER,
+                avg_volume_10d      INTEGER,
+
+                -- Valuation
+                market_cap          INTEGER,
+                enterprise_value    INTEGER,
+                pe_trailing         REAL,
+                pe_forward          REAL,
+                peg_ratio           REAL,
+                price_to_book       REAL,
+                price_to_sales      REAL,
+                ev_to_ebitda        REAL,
+                ev_to_revenue       REAL,
+
+                -- Profitability
+                profit_margin       REAL,
+                operating_margin    REAL,
+                gross_margin        REAL,
+                return_on_equity    REAL,
+                return_on_assets    REAL,
+
+                -- Income / Balance sheet
+                revenue             INTEGER,
+                revenue_growth      REAL,
+                earnings_growth     REAL,
+                total_cash          INTEGER,
+                total_debt          INTEGER,
+                debt_to_equity      REAL,
+                current_ratio       REAL,
+                book_value          REAL,
+
+                -- Per-share
+                eps_trailing        REAL,
+                eps_forward         REAL,
+                revenue_per_share   REAL,
+
+                -- Dividends
+                dividend_yield      REAL,
+                dividend_rate       REAL,
+                payout_ratio        REAL,
+                ex_dividend_date    TEXT,
+
+                -- Range
+                fifty_two_week_high REAL,
+                fifty_two_week_low  REAL,
+                fifty_day_avg       REAL,
+                two_hundred_day_avg REAL,
+                beta                REAL,
+
+                -- Shares
+                shares_outstanding  INTEGER,
+                float_shares        INTEGER,
+                short_ratio         REAL,
+                short_pct_of_float  REAL,
+
+                -- Descriptive
+                name                TEXT,
+                sector              TEXT,
+                industry            TEXT,
+                exchange            TEXT,
+                currency            TEXT,
+                quote_type          TEXT,
+
+                -- Metadata
+                fetch_success       INTEGER NOT NULL DEFAULT 1,
+                fetch_error         TEXT,
+
+                PRIMARY KEY (ticker, fetched_at)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tf_ticker ON ticker_fundamentals(ticker);
+            CREATE INDEX IF NOT EXISTS idx_tf_fetched ON ticker_fundamentals(fetched_at);
+            CREATE INDEX IF NOT EXISTS idx_tf_latest ON ticker_fundamentals(ticker, fetched_at DESC);
+
+            -- Latest snapshot view helper: one row per ticker (most recent fetch)
+            CREATE TABLE IF NOT EXISTS ticker_fundamentals_latest (
+                ticker              TEXT PRIMARY KEY,
+                fetched_at          REAL NOT NULL,
+
+                current_price       REAL,
+                previous_close      REAL,
+                open_price          REAL,
+                day_high            REAL,
+                day_low             REAL,
+                pct_change_open     REAL,
+                pct_change_prev     REAL,
+
+                volume              INTEGER,
+                avg_volume          INTEGER,
+                avg_volume_10d      INTEGER,
+
+                market_cap          INTEGER,
+                enterprise_value    INTEGER,
+                pe_trailing         REAL,
+                pe_forward          REAL,
+                peg_ratio           REAL,
+                price_to_book       REAL,
+                price_to_sales      REAL,
+                ev_to_ebitda        REAL,
+                ev_to_revenue       REAL,
+
+                profit_margin       REAL,
+                operating_margin    REAL,
+                gross_margin        REAL,
+                return_on_equity    REAL,
+                return_on_assets    REAL,
+
+                revenue             INTEGER,
+                revenue_growth      REAL,
+                earnings_growth     REAL,
+                total_cash          INTEGER,
+                total_debt          INTEGER,
+                debt_to_equity      REAL,
+                current_ratio       REAL,
+                book_value          REAL,
+
+                eps_trailing        REAL,
+                eps_forward         REAL,
+                revenue_per_share   REAL,
+
+                dividend_yield      REAL,
+                dividend_rate       REAL,
+                payout_ratio        REAL,
+                ex_dividend_date    TEXT,
+
+                fifty_two_week_high REAL,
+                fifty_two_week_low  REAL,
+                fifty_day_avg       REAL,
+                two_hundred_day_avg REAL,
+                beta                REAL,
+
+                shares_outstanding  INTEGER,
+                float_shares        INTEGER,
+                short_ratio         REAL,
+                short_pct_of_float  REAL,
+
+                name                TEXT,
+                sector              TEXT,
+                industry            TEXT,
+                exchange            TEXT,
+                currency            TEXT,
+                quote_type          TEXT,
+
+                fetch_success       INTEGER NOT NULL DEFAULT 1,
+                fetch_error         TEXT
+            );
         """)
         self.conn.commit()
 
@@ -443,6 +626,155 @@ class RedditDatabase:
             INSERT OR IGNORE INTO processed_sources (source_type, source_id, processed_at)
             VALUES (?, ?, ?)
         """, (source_type, source_id, time.time()))
+
+    # ── NER pipeline queries ──────────────────────────────────────
+
+    def get_ner_unprocessed_posts(self, limit=200) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT p.id, p.title, p.selftext, p.subreddit, p.created_utc
+            FROM posts p
+            LEFT JOIN ner_processed_sources nps
+                ON nps.source_type = 'post' AND nps.source_id = p.id
+            WHERE nps.source_id IS NULL
+            ORDER BY p.created_utc DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_ner_unprocessed_comments(self, limit=200) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT c.id, c.body, c.post_id, c.created_utc,
+                   p.subreddit
+            FROM comments c
+            JOIN posts p ON c.post_id = p.id
+            LEFT JOIN ner_processed_sources nps
+                ON nps.source_type = 'comment' AND nps.source_id = c.id
+            WHERE nps.source_id IS NULL
+            ORDER BY c.created_utc DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_named_entities(self, entities: list[dict]) -> int:
+        """Insert named entities. Each dict: source_type, source_id, entity_text, entity_label, subreddit, created_utc."""
+        now = time.time()
+        inserted = 0
+        for e in entities:
+            try:
+                self.conn.execute("""
+                    INSERT OR IGNORE INTO named_entities
+                        (source_type, source_id, entity_text, entity_label, subreddit, created_utc, discovered_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    e["source_type"], e["source_id"], e["entity_text"], e["entity_label"],
+                    e.get("subreddit"), e.get("created_utc"), now,
+                ))
+                inserted += 1
+            except sqlite3.IntegrityError:
+                pass
+        return inserted
+
+    def mark_ner_processed(self, source_type: str, source_id: str):
+        self.conn.execute("""
+            INSERT OR IGNORE INTO ner_processed_sources (source_type, source_id, processed_at)
+            VALUES (?, ?, ?)
+        """, (source_type, source_id, time.time()))
+
+    # ── Fundamentals ──────────────────────────────────────────────────
+
+    FUNDAMENTALS_COLUMNS = [
+        "current_price", "previous_close", "open_price", "day_high", "day_low",
+        "pct_change_open", "pct_change_prev",
+        "volume", "avg_volume", "avg_volume_10d",
+        "market_cap", "enterprise_value",
+        "pe_trailing", "pe_forward", "peg_ratio", "price_to_book",
+        "price_to_sales", "ev_to_ebitda", "ev_to_revenue",
+        "profit_margin", "operating_margin", "gross_margin",
+        "return_on_equity", "return_on_assets",
+        "revenue", "revenue_growth", "earnings_growth",
+        "total_cash", "total_debt", "debt_to_equity", "current_ratio", "book_value",
+        "eps_trailing", "eps_forward", "revenue_per_share",
+        "dividend_yield", "dividend_rate", "payout_ratio", "ex_dividend_date",
+        "fifty_two_week_high", "fifty_two_week_low", "fifty_day_avg", "two_hundred_day_avg", "beta",
+        "shares_outstanding", "float_shares", "short_ratio", "short_pct_of_float",
+        "name", "sector", "industry", "exchange", "currency", "quote_type",
+        "fetch_success", "fetch_error",
+    ]
+
+    def save_fundamentals(self, ticker: str, data: dict, success: bool = True, error: str | None = None):
+        """Insert a fundamentals snapshot into history and update the latest table."""
+        now = time.time()
+        data["fetch_success"] = 1 if success else 0
+        data["fetch_error"] = error
+
+        cols = ["ticker", "fetched_at"] + self.FUNDAMENTALS_COLUMNS
+        placeholders = ",".join("?" * len(cols))
+        col_str = ",".join(cols)
+        vals = [ticker, now] + [data.get(c) for c in self.FUNDAMENTALS_COLUMNS]
+
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO ticker_fundamentals ({col_str}) VALUES ({placeholders})",
+            vals,
+        )
+
+        # Upsert latest
+        latest_cols = ["ticker", "fetched_at"] + self.FUNDAMENTALS_COLUMNS
+        latest_placeholders = ",".join("?" * len(latest_cols))
+        latest_col_str = ",".join(latest_cols)
+        latest_vals = [ticker, now] + [data.get(c) for c in self.FUNDAMENTALS_COLUMNS]
+
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO ticker_fundamentals_latest ({latest_col_str}) VALUES ({latest_placeholders})",
+            latest_vals,
+        )
+        self.conn.commit()
+
+    def get_latest_fundamentals(self, ticker: str) -> dict | None:
+        """Get the most recent fundamentals snapshot for a ticker."""
+        row = self.conn.execute(
+            "SELECT * FROM ticker_fundamentals_latest WHERE ticker = ?",
+            (ticker.upper(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_fundamentals_age(self, ticker: str) -> float | None:
+        """Return seconds since last successful fundamentals fetch, or None if never fetched."""
+        row = self.conn.execute(
+            "SELECT fetched_at FROM ticker_fundamentals_latest WHERE ticker = ? AND fetch_success = 1",
+            (ticker.upper(),),
+        ).fetchone()
+        if row is None:
+            return None
+        return time.time() - row["fetched_at"]
+
+    def get_all_latest_fundamentals(self, tickers: list[str] | None = None) -> list[dict]:
+        """Get latest fundamentals for all tickers (or a subset)."""
+        if tickers:
+            placeholders = ",".join("?" * len(tickers))
+            rows = self.conn.execute(
+                f"SELECT * FROM ticker_fundamentals_latest WHERE fetch_success = 1 AND ticker IN ({placeholders})",
+                [t.upper() for t in tickers],
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM ticker_fundamentals_latest WHERE fetch_success = 1"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tickers_mentioned_since(self, cutoff: float, limit: int = 500) -> list[dict]:
+        """Get tickers mentioned since cutoff, ordered by mention count desc."""
+        rows = self.conn.execute(
+            """
+            SELECT ticker, COUNT(*) AS mention_count
+            FROM ticker_mentions
+            WHERE created_utc >= ?
+            GROUP BY ticker
+            ORDER BY mention_count DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ── Stats ──────────────────────────────────────────────────────────
 

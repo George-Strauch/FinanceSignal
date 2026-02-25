@@ -4,7 +4,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Line, Bar,
 } from 'recharts'
-import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus } from 'react-icons/fi'
+import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser } from 'react-icons/fi'
 import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
@@ -14,6 +14,11 @@ import './TickerDetail.css'
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d']
 const PRICE_RANGES = ['1D', '5D', '1M', '3M', '6M', '1Y']
 const RANGE_API_MAP = { '1D': '1d', '5D': '5d', '1M': '1mo', '3M': '3mo', '6M': '6mo', '1Y': '1y' }
+const COUNT_MODES = [
+  { value: 'mentions', label: 'Mentions' },
+  { value: 'authors', label: 'Authors' },
+  { value: 'posts', label: 'Posts' },
+]
 
 const PALETTE = [
   '99, 102, 241',   // indigo
@@ -39,13 +44,6 @@ function pivotChartData(mentionsOverTime, subreddits) {
     map.get(row.timestamp)[row.subreddit] = row.count
   }
   return Array.from(map.values())
-}
-
-function formatTimestamp(ts) {
-  if (!ts) return ''
-  if (ts.length <= 10) return ts          // "2025-01-15" → as-is
-  // "2025-01-15T14:00:00" → "01-15 14:00"
-  return ts.slice(5, 10) + ' ' + ts.slice(11, 16)
 }
 
 function formatPrice(v) {
@@ -135,6 +133,7 @@ export default function TickerDetail() {
   const { ticker } = useParams()
   const navigate = useNavigate()
   const [window, setWindow] = usePersistedState('ticker-detail-window', '7d')
+  const [countMode, setCountMode] = usePersistedState('count-mode', 'mentions')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -149,6 +148,19 @@ export default function TickerDetail() {
   const [mentionData, setMentionData] = useState(null)
   const [mentionLoading, setMentionLoading] = useState(false)
 
+  // Subreddit mentions chart (below price chart, shares priceRange)
+  const [subMentionData, setSubMentionData] = useState(null)
+  const [subMentionLoading, setSubMentionLoading] = useState(true)
+
+  // Post feed date filter state
+  const [postDateFrom, setPostDateFrom] = usePersistedState('ticker-post-date-from', null)
+  const [postDateTo, setPostDateTo] = usePersistedState('ticker-post-date-to', null)
+
+  // Bottom tab state: 'posts' or 'authors'
+  const [bottomTab, setBottomTab] = usePersistedState('ticker-bottom-tab', 'posts')
+  const [authorData, setAuthorData] = useState(null)
+  const [authorLoading, setAuthorLoading] = useState(false)
+
   // Tag quick-add state
   const [allTagSets, setAllTagSets] = useState([])
   const [tagMenuOpen, setTagMenuOpen] = useState(false)
@@ -159,19 +171,21 @@ export default function TickerDetail() {
     if (ticker) recordTickerVisit(ticker)
   }, [ticker])
 
+  const countModeLabel = COUNT_MODES.find((m) => m.value === countMode)?.label.toLowerCase() || 'mentions'
+
   // Fetch Reddit mention detail
   const fetchDetail = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await get(`/tickers/${ticker}?window=${window}`)
+      const res = await get(`/tickers/${ticker}?window=${window}&count_mode=${countMode}`)
       setData(res)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [ticker, window])
+  }, [ticker, window, countMode])
 
   // Fetch price chart
   const fetchPriceChart = useCallback(async () => {
@@ -186,6 +200,23 @@ export default function TickerDetail() {
       setPriceLoading(false)
     }
   }, [ticker, priceRange])
+
+  // Fundamentals state (on-demand fetch)
+  const [fundamentals, setFundamentals] = useState(null)
+  const [fundLoading, setFundLoading] = useState(true)
+
+  // Fetch fundamentals (triggers on-demand refresh on backend)
+  const fetchFundamentals = useCallback(async () => {
+    setFundLoading(true)
+    try {
+      const res = await get(`/fundamentals/${ticker}`)
+      if (!res.error) setFundamentals(res)
+    } catch {
+      // fallback to market info
+    } finally {
+      setFundLoading(false)
+    }
+  }, [ticker])
 
   // Fetch market info
   const fetchMarketInfo = useCallback(async () => {
@@ -205,18 +236,50 @@ export default function TickerDetail() {
     setMentionLoading(true)
     try {
       const rangeParam = RANGE_API_MAP[priceRange]
-      const res = await get(`/mentions/${ticker}/hourly?range=${rangeParam}`)
+      const res = await get(`/mentions/${ticker}/hourly?range=${rangeParam}&count_mode=${countMode}`)
       setMentionData(res.mentions)
     } catch {
       setMentionData(null)
     } finally {
       setMentionLoading(false)
     }
-  }, [ticker, priceRange])
+  }, [ticker, priceRange, countMode])
+
+  // Fetch subreddit-level mentions for chart below price chart
+  const fetchSubMentions = useCallback(async () => {
+    setSubMentionLoading(true)
+    try {
+      const rangeParam = RANGE_API_MAP[priceRange]
+      const res = await get(`/mentions/${ticker}/by-subreddit?range=${rangeParam}&count_mode=${countMode}`)
+      setSubMentionData(res.mentions)
+    } catch {
+      setSubMentionData(null)
+    } finally {
+      setSubMentionLoading(false)
+    }
+  }, [ticker, priceRange, countMode])
+
+  // Fetch top authors for this ticker
+  const fetchAuthors = useCallback(async () => {
+    setAuthorLoading(true)
+    try {
+      const res = await get(`/tickers/${ticker}/authors?window=${window}`)
+      setAuthorData(res)
+    } catch {
+      setAuthorData(null)
+    } finally {
+      setAuthorLoading(false)
+    }
+  }, [ticker, window])
 
   useEffect(() => { fetchDetail() }, [fetchDetail])
+  useEffect(() => {
+    if (bottomTab === 'authors') fetchAuthors()
+  }, [bottomTab, fetchAuthors])
   useEffect(() => { fetchPriceChart() }, [fetchPriceChart])
   useEffect(() => { fetchMarketInfo() }, [fetchMarketInfo])
+  useEffect(() => { fetchFundamentals() }, [fetchFundamentals])
+  useEffect(() => { fetchSubMentions() }, [fetchSubMentions])
   useEffect(() => {
     if (mentionOverlay) fetchMentions()
   }, [mentionOverlay, fetchMentions])
@@ -253,7 +316,6 @@ export default function TickerDetail() {
   }
 
   const subreddits = data ? Object.keys(data.mentions_by_subreddit) : []
-  const chartData = data ? pivotChartData(data.mentions_over_time, subreddits) : []
   const topSubreddit = subreddits.length > 0 ? subreddits[0] : '-'
 
   // Merged data for price chart with optional mention overlay
@@ -261,6 +323,14 @@ export default function TickerDetail() {
     ? (mentionOverlay && mentionData
         ? mergePriceMentions(priceData, mentionData, priceRange)
         : priceData)
+    : []
+
+  // Pivot subreddit mention data for stacked area chart
+  const subMentionSubs = subMentionData
+    ? [...new Set(subMentionData.map((r) => r.subreddit))]
+    : []
+  const subMentionChartData = subMentionData
+    ? pivotChartData(subMentionData, subMentionSubs)
     : []
 
   const priceChangePositive = marketInfo?.day_change != null && marketInfo.day_change >= 0
@@ -324,9 +394,20 @@ export default function TickerDetail() {
           </div>
           {data && (
             <span className="td-mention-count">
-              {data.total_mentions.toLocaleString()} mentions
+              {data.total_mentions.toLocaleString()} {countModeLabel}
             </span>
           )}
+        </div>
+        <div className="td-count-mode-selector">
+          {COUNT_MODES.map((m) => (
+            <button
+              key={m.value}
+              className={`window-btn ${countMode === m.value ? 'active' : ''}`}
+              onClick={() => setCountMode(m.value)}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
         <div className="td-window-selector">
           {WINDOWS.map((w) => (
@@ -403,6 +484,76 @@ export default function TickerDetail() {
         </div>
       )}
 
+      {/* Fundamentals Panel */}
+      {fundamentals && !fundLoading && (
+        <div className="td-fundamentals-panel">
+          <h2>Fundamentals</h2>
+          <div className="td-fund-grid">
+            <div className="td-fund-section">
+              <h3>Valuation</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>P/E (TTM)</span><span>{fundamentals.pe_trailing?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>P/E (Fwd)</span><span>{fundamentals.pe_forward?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>PEG Ratio</span><span>{fundamentals.peg_ratio?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>P/B</span><span>{fundamentals.price_to_book?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>P/S</span><span>{fundamentals.price_to_sales?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>EV/EBITDA</span><span>{fundamentals.ev_to_ebitda?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>EV/Revenue</span><span>{fundamentals.ev_to_revenue?.toFixed(2) ?? '-'}</span></div>
+              </div>
+            </div>
+            <div className="td-fund-section">
+              <h3>Profitability</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>Profit Margin</span><span>{fundamentals.profit_margin != null ? (fundamentals.profit_margin * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>Operating Margin</span><span>{fundamentals.operating_margin != null ? (fundamentals.operating_margin * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>Gross Margin</span><span>{fundamentals.gross_margin != null ? (fundamentals.gross_margin * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>ROE</span><span>{fundamentals.return_on_equity != null ? (fundamentals.return_on_equity * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>ROA</span><span>{fundamentals.return_on_assets != null ? (fundamentals.return_on_assets * 100).toFixed(1) + '%' : '-'}</span></div>
+              </div>
+            </div>
+            <div className="td-fund-section">
+              <h3>Growth</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>Revenue</span><span>{fundamentals.revenue_fmt ?? '-'}</span></div>
+                <div className="td-fund-row"><span>Revenue Growth</span><span>{fundamentals.revenue_growth != null ? (fundamentals.revenue_growth * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>Earnings Growth</span><span>{fundamentals.earnings_growth != null ? (fundamentals.earnings_growth * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>EPS (TTM)</span><span>{fundamentals.eps_trailing != null ? '$' + fundamentals.eps_trailing.toFixed(2) : '-'}</span></div>
+                <div className="td-fund-row"><span>EPS (Fwd)</span><span>{fundamentals.eps_forward != null ? '$' + fundamentals.eps_forward.toFixed(2) : '-'}</span></div>
+              </div>
+            </div>
+            <div className="td-fund-section">
+              <h3>Balance Sheet</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>Total Cash</span><span>{fundamentals.total_cash_fmt ?? '-'}</span></div>
+                <div className="td-fund-row"><span>Total Debt</span><span>{fundamentals.total_debt_fmt ?? '-'}</span></div>
+                <div className="td-fund-row"><span>D/E Ratio</span><span>{fundamentals.debt_to_equity?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>Current Ratio</span><span>{fundamentals.current_ratio?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>Book Value</span><span>{fundamentals.book_value != null ? '$' + fundamentals.book_value.toFixed(2) : '-'}</span></div>
+              </div>
+            </div>
+            <div className="td-fund-section">
+              <h3>Dividends</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>Yield</span><span>{fundamentals.dividend_yield != null ? (fundamentals.dividend_yield * 100).toFixed(2) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>Rate</span><span>{fundamentals.dividend_rate != null ? '$' + fundamentals.dividend_rate.toFixed(2) : '-'}</span></div>
+                <div className="td-fund-row"><span>Payout Ratio</span><span>{fundamentals.payout_ratio != null ? (fundamentals.payout_ratio * 100).toFixed(1) + '%' : '-'}</span></div>
+                <div className="td-fund-row"><span>Ex-Div Date</span><span>{fundamentals.ex_dividend_date ?? '-'}</span></div>
+              </div>
+            </div>
+            <div className="td-fund-section">
+              <h3>Trading</h3>
+              <div className="td-fund-rows">
+                <div className="td-fund-row"><span>Beta</span><span>{fundamentals.beta?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>50-Day Avg</span><span>{fundamentals.fifty_day_avg != null ? '$' + fundamentals.fifty_day_avg.toFixed(2) : '-'}</span></div>
+                <div className="td-fund-row"><span>200-Day Avg</span><span>{fundamentals.two_hundred_day_avg != null ? '$' + fundamentals.two_hundred_day_avg.toFixed(2) : '-'}</span></div>
+                <div className="td-fund-row"><span>Short Ratio</span><span>{fundamentals.short_ratio?.toFixed(2) ?? '-'}</span></div>
+                <div className="td-fund-row"><span>Short % Float</span><span>{fundamentals.short_pct_of_float != null ? (fundamentals.short_pct_of_float * 100).toFixed(2) + '%' : '-'}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Price Chart */}
       <div className="td-price-section">
         <div className="td-price-header">
@@ -423,7 +574,7 @@ export default function TickerDetail() {
               className={`td-overlay-toggle ${mentionOverlay ? 'active' : ''}`}
               onClick={() => setMentionOverlay(!mentionOverlay)}
             >
-              {mentionOverlay ? 'Hide Mentions' : 'Show Mentions'}
+              {mentionOverlay ? `Hide ${COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'}` : `Show ${COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'}`}
             </button>
           </div>
         </div>
@@ -473,7 +624,7 @@ export default function TickerDetail() {
                   }}
                   labelFormatter={(t) => formatPriceTs(t, priceRange)}
                   formatter={(value, name) => {
-                    if (name === 'mentions') return [value, 'Mentions']
+                    if (name === 'mentions') return [value, COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions']
                     return [formatPrice(value), 'Price']
                   }}
                 />
@@ -499,6 +650,63 @@ export default function TickerDetail() {
                   />
                 )}
               </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Mentions by Subreddit (synced with price chart range) */}
+      <div className="td-chart-section">
+        <h2>{COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'} by Subreddit</h2>
+        {subMentionLoading && !subMentionData && (
+          <div className="td-chart-skeleton">
+            <div className="skel-line skel-chart-area" />
+          </div>
+        )}
+        {!subMentionLoading && (!subMentionData || subMentionChartData.length === 0) && (
+          <p className="td-no-data">No mention data for this range.</p>
+        )}
+        {subMentionChartData.length > 0 && (
+          <div className="td-chart">
+            <ResponsiveContainer width="100%" height={250}>
+              <AreaChart data={subMentionChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(t) => formatPriceTs(t, priceRange)}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                  minTickGap={40}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
+                  stroke="rgba(var(--soft-border), 0.5)"
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: 'rgb(var(--primary-color))',
+                    border: '1px solid rgba(var(--soft-border), var(--soft-border-alpha))',
+                    borderRadius: 8,
+                    fontSize: '0.82rem',
+                  }}
+                  labelFormatter={(t) => formatPriceTs(t, priceRange)}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: '0.8rem' }}
+                />
+                {subMentionSubs.map((sub, i) => (
+                  <Area
+                    key={sub}
+                    type="monotone"
+                    dataKey={sub}
+                    stackId="1"
+                    stroke={`rgb(${PALETTE[i % PALETTE.length]})`}
+                    fill={`rgba(${PALETTE[i % PALETTE.length]}, 0.4)`}
+                    isAnimationActive={false}
+                  />
+                ))}
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
@@ -532,12 +740,14 @@ export default function TickerDetail() {
           )}
           <div className="td-stat-card">
             <div className="td-stat-value">{data.total_mentions.toLocaleString()}</div>
-            <div className="td-stat-label">Total Mentions</div>
+            <div className="td-stat-label">Total {COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'}</div>
           </div>
-          <div className="td-stat-card">
-            <div className="td-stat-value">{data.unique_posts?.toLocaleString() ?? '-'}</div>
-            <div className="td-stat-label">Unique Posts</div>
-          </div>
+          {countMode !== 'posts' && (
+            <div className="td-stat-card">
+              <div className="td-stat-value">{data.unique_posts?.toLocaleString() ?? '-'}</div>
+              <div className="td-stat-label">Unique Posts</div>
+            </div>
+          )}
           <div className="td-stat-card">
             <div className="td-stat-value">{topSubreddit}</div>
             <div className="td-stat-label">Top Subreddit</div>
@@ -548,62 +758,6 @@ export default function TickerDetail() {
           </div>
         </div>
       )}
-
-      {/* Mentions Over Time Chart */}
-      <div className="td-chart-section">
-        <h2>Mentions Over Time</h2>
-        {loading && !data && (
-          <div className="td-chart-skeleton">
-            <div className="skel-line skel-chart-area" />
-          </div>
-        )}
-        {data && chartData.length === 0 && (
-          <p className="td-no-data">No mention data for this window.</p>
-        )}
-        {data && chartData.length > 0 && (
-          <div className="td-chart">
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
-                <XAxis
-                  dataKey="timestamp"
-                  tickFormatter={formatTimestamp}
-                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
-                  stroke="rgba(var(--soft-border), 0.5)"
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
-                  stroke="rgba(var(--soft-border), 0.5)"
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: 'rgb(var(--primary-color))',
-                    border: '1px solid rgba(var(--soft-border), var(--soft-border-alpha))',
-                    borderRadius: 8,
-                    fontSize: '0.82rem',
-                  }}
-                  labelFormatter={formatTimestamp}
-                />
-                <Legend
-                  wrapperStyle={{ fontSize: '0.8rem' }}
-                />
-                {subreddits.map((sub, i) => (
-                  <Area
-                    key={sub}
-                    type="monotone"
-                    dataKey={sub}
-                    stackId="1"
-                    stroke={`rgb(${PALETTE[i % PALETTE.length]})`}
-                    fill={`rgba(${PALETTE[i % PALETTE.length]}, 0.4)`}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
 
       {/* Subreddit Breakdown */}
       {data && subreddits.length > 0 && (
@@ -633,8 +787,77 @@ export default function TickerDetail() {
         </div>
       )}
 
-      {/* Post Feed */}
-      <PostFeed ticker={ticker} title="Recent Posts" />
+      {/* Bottom Tabs: Posts / By Author */}
+      <div className="td-bottom-tabs">
+        <button
+          className={`td-tab-btn ${bottomTab === 'posts' ? 'active' : ''}`}
+          onClick={() => setBottomTab('posts')}
+        >
+          Posts
+        </button>
+        <button
+          className={`td-tab-btn ${bottomTab === 'authors' ? 'active' : ''}`}
+          onClick={() => setBottomTab('authors')}
+        >
+          <FiUser /> By Author
+        </button>
+      </div>
+
+      {bottomTab === 'posts' && (
+        <PostFeed
+          ticker={ticker}
+          title="Posts"
+          dateFrom={postDateFrom}
+          dateTo={postDateTo}
+          onDateChange={(from, to) => { setPostDateFrom(from); setPostDateTo(to) }}
+        />
+      )}
+
+      {bottomTab === 'authors' && (
+        <div className="td-author-section">
+          {authorLoading && !authorData && (
+            <div className="td-author-skeleton">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="td-author-row skeleton">
+                  <div className="skel-line" style={{ height: 18, width: '40%' }} />
+                  <div className="skel-line" style={{ height: 14, width: '20%' }} />
+                </div>
+              ))}
+            </div>
+          )}
+          {!authorLoading && (!authorData?.authors || authorData.authors.length === 0) && (
+            <p className="td-no-data">No author data for this window.</p>
+          )}
+          {authorData?.authors?.length > 0 && (
+            <div className="td-author-list">
+              {authorData.authors.map((a, i) => {
+                const maxCount = authorData.authors[0].total_count
+                const pct = maxCount > 0 ? (a.total_count / maxCount) * 100 : 0
+                return (
+                  <div
+                    key={a.author}
+                    className="td-author-row"
+                    onClick={() => navigate(`/authors/${encodeURIComponent(a.author)}`)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && navigate(`/authors/${encodeURIComponent(a.author)}`)}
+                  >
+                    <span className="td-author-rank">{i + 1}</span>
+                    <span className="td-author-name">u/{a.author}</span>
+                    <div className="td-author-bar-track">
+                      <div className="td-author-bar-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="td-author-counts">
+                      {a.post_count}p / {a.comment_count}c
+                    </span>
+                    <span className="td-author-total">{a.total_count}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
