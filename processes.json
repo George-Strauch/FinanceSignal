@@ -111,6 +111,61 @@
                 }
             ],
             "on_failure": "stop"
+        },
+        {
+            "id": "portfolio_snapshotter",
+            "name": "Portfolio Snapshotter",
+            "description": "Takes periodic snapshots of portfolio and strategy performance for equity curve tracking.",
+            "module": "app.portfolio_snapshotter",
+            "function": "run_portfolio_snapshot",
+            "type": "oneshot",
+            "auto_start": true,
+            "schedule": {
+                "interval_minutes": 15,
+                "interval_type": "after_completion"
+            },
+            "on_failure": "stop"
+        },
+        {
+            "id": "bot_runner",
+            "name": "Bot Runner",
+            "description": "Hourly evaluation of all active trading bots against the ticker universe. Discovers bots from bots/ directory, builds data points, and executes trades.",
+            "module": "app.bot_engine.runner",
+            "function": "run_bot_evaluator",
+            "type": "oneshot",
+            "auto_start": true,
+            "schedule": {
+                "interval_minutes": 60,
+                "interval_type": "after_completion"
+            },
+            "on_failure": "stop"
+        },
+        {
+            "id": "price_archiver",
+            "name": "Price Archiver",
+            "description": "Archives hourly OHLCV price data from yfinance for recently-mentioned tickers. Builds the price_history table used by backtesting.",
+            "module": "app.price_archiver",
+            "function": "run_price_archiver",
+            "type": "oneshot",
+            "auto_start": true,
+            "schedule": {
+                "interval_minutes": 60,
+                "interval_type": "after_completion"
+            },
+            "params": [
+                {
+                    "key": "request_delay_seconds",
+                    "label": "Request Delay",
+                    "type": "number",
+                    "default": 2.0,
+                    "unit": "seconds",
+                    "min": 1,
+                    "max": 30,
+                    "step": 0.5,
+                    "description": "Delay between yfinance API calls"
+                }
+            ],
+            "on_failure": "stop"
         }
     ]
 }

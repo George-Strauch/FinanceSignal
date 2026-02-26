@@ -357,8 +357,104 @@ class RedditDatabase:
                 fetch_success       INTEGER NOT NULL DEFAULT 1,
                 fetch_error         TEXT
             );
+
+            -- ── Paper Trading ───────────────────────────────────────────
+            CREATE TABLE IF NOT EXISTS strategies (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                title           TEXT NOT NULL,
+                description     TEXT DEFAULT '',
+                notes           TEXT DEFAULT '',
+                status          TEXT NOT NULL DEFAULT 'active',
+                color           TEXT DEFAULT '#6366f1',
+                created_at      REAL NOT NULL,
+                updated_at      REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS trades (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_id     INTEGER NOT NULL,
+                ticker          TEXT NOT NULL,
+                direction       TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'open',
+                entry_price     REAL NOT NULL,
+                entry_at        REAL NOT NULL,
+                entry_note      TEXT DEFAULT '',
+                exit_price      REAL,
+                exit_at         REAL,
+                exit_note       TEXT DEFAULT '',
+                realized_pnl_pct REAL,
+                holding_seconds  REAL,
+                created_at      REAL NOT NULL,
+                updated_at      REAL NOT NULL,
+                FOREIGN KEY (strategy_id) REFERENCES strategies(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
+            CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+            CREATE INDEX IF NOT EXISTS idx_trades_entry_at ON trades(entry_at);
+
+            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_id     INTEGER,
+                snapshot_at     REAL NOT NULL,
+                avg_return_pct  REAL NOT NULL DEFAULT 0,
+                open_positions  INTEGER NOT NULL DEFAULT 0,
+                win_rate        REAL,
+                FOREIGN KEY (strategy_id) REFERENCES strategies(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_snapshots_strategy ON portfolio_snapshots(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_snapshots_at ON portfolio_snapshots(snapshot_at);
+
+            -- ── Price History (for backtesting) ───────────────────────────
+            CREATE TABLE IF NOT EXISTS price_history (
+                ticker      TEXT NOT NULL,
+                timestamp   REAL NOT NULL,
+                open        REAL,
+                high        REAL,
+                low         REAL,
+                close       REAL,
+                volume      INTEGER,
+                source      TEXT DEFAULT 'yfinance',
+                fetched_at  REAL NOT NULL,
+                PRIMARY KEY (ticker, timestamp)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ph_ticker ON price_history(ticker);
+            CREATE INDEX IF NOT EXISTS idx_ph_timestamp ON price_history(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_ph_ticker_ts_desc ON price_history(ticker, timestamp DESC);
+
+            -- ── Backtest Runs ─────────────────────────────────────────────
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy_id         INTEGER NOT NULL,
+                bot_id              TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'pending',
+                started_at          REAL,
+                completed_at        REAL,
+                error               TEXT,
+                start_date          TEXT,
+                end_date            TEXT,
+                tickers_evaluated   INTEGER DEFAULT 0,
+                hours_evaluated     INTEGER DEFAULT 0,
+                total_hours         INTEGER DEFAULT 0,
+                trades_generated    INTEGER DEFAULT 0,
+                win_rate            REAL,
+                avg_return_pct      REAL,
+                total_trades        INTEGER DEFAULT 0,
+                FOREIGN KEY (strategy_id) REFERENCES strategies(id)
+            );
         """)
         self.conn.commit()
+
+        # ── Idempotent ALTER TABLE for bot columns on strategies ──────
+        for col_sql in [
+            "ALTER TABLE strategies ADD COLUMN bot_id TEXT DEFAULT NULL",
+            "ALTER TABLE strategies ADD COLUMN live_trading INTEGER DEFAULT 0",
+            "ALTER TABLE strategies ADD COLUMN last_evaluated_at REAL DEFAULT NULL",
+        ]:
+            try:
+                self.conn.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
 
     # ── Helpers ────────────────────────────────────────────────────────
 
@@ -799,3 +895,403 @@ class RedditDatabase:
             "media_links": media, "media_pending": media_pending,
             "ticker_mentions": ticker_mentions, "processed_sources": processed,
         }
+
+    # ── Strategies ──────────────────────────────────────────────────
+
+    def create_strategy(self, title: str, description: str = "", notes: str = "",
+                        color: str = "#6366f1") -> dict:
+        now = time.time()
+        cur = self.conn.execute(
+            """INSERT INTO strategies (title, description, notes, color, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (title, description, notes, color, now, now),
+        )
+        self.conn.commit()
+        return self.get_strategy(cur.lastrowid)
+
+    def update_strategy(self, strategy_id: int, **kwargs) -> dict | None:
+        allowed = {"title", "description", "notes", "status", "color"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+        if not updates:
+            return self.get_strategy(strategy_id)
+        updates["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        vals = list(updates.values()) + [strategy_id]
+        self.conn.execute(f"UPDATE strategies SET {set_clause} WHERE id = ?", vals)
+        self.conn.commit()
+        return self.get_strategy(strategy_id)
+
+    def get_strategy(self, strategy_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_strategies(self, status: str | None = None) -> list[dict]:
+        if status:
+            rows = self.conn.execute(
+                "SELECT * FROM strategies WHERE status = ? ORDER BY created_at DESC", (status,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM strategies ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def archive_strategy(self, strategy_id: int) -> dict | None:
+        return self.update_strategy(strategy_id, status="archived")
+
+    # ── Trades ──────────────────────────────────────────────────────
+
+    def open_trade(self, strategy_id: int, ticker: str, direction: str,
+                   entry_price: float, entry_at: float | None = None,
+                   entry_note: str = "") -> dict:
+        now = time.time()
+        entry_at = entry_at or now
+        cur = self.conn.execute(
+            """INSERT INTO trades (strategy_id, ticker, direction, entry_price, entry_at,
+                                   entry_note, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (strategy_id, ticker.upper(), direction, entry_price, entry_at, entry_note, now, now),
+        )
+        self.conn.commit()
+        return self.get_trade(cur.lastrowid)
+
+    def close_trade(self, trade_id: int, exit_price: float, exit_note: str = "",
+                    exit_at: float | None = None) -> dict | None:
+        trade = self.get_trade(trade_id)
+        if not trade or trade["status"] != "open":
+            return None
+        now = time.time()
+        exit_at = exit_at or now
+        direction_mult = 1.0 if trade["direction"] == "long" else -1.0
+        pnl_pct = direction_mult * ((exit_price - trade["entry_price"]) / trade["entry_price"]) * 100
+        holding = exit_at - trade["entry_at"]
+        self.conn.execute(
+            """UPDATE trades SET exit_price = ?, exit_at = ?, exit_note = ?,
+               realized_pnl_pct = ?, holding_seconds = ?, status = 'closed', updated_at = ?
+               WHERE id = ?""",
+            (exit_price, exit_at, exit_note, round(pnl_pct, 4), holding, now, trade_id),
+        )
+        self.conn.commit()
+        return self.get_trade(trade_id)
+
+    def get_trade(self, trade_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_trades(self, strategy_id: int | None = None, status: str | None = None,
+                    ticker: str | None = None, limit: int = 200) -> list[dict]:
+        clauses, params = [], []
+        if strategy_id is not None:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if ticker:
+            clauses.append("ticker = ?")
+            params.append(ticker.upper())
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM trades{where} ORDER BY entry_at DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_trade(self, trade_id: int) -> bool:
+        trade = self.get_trade(trade_id)
+        if not trade or trade["status"] != "open":
+            return False
+        self.conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+        self.conn.commit()
+        return True
+
+    def get_open_trades_for_ticker(self, ticker: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM trades WHERE ticker = ? AND status = 'open' ORDER BY entry_at DESC",
+            (ticker.upper(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Portfolio Snapshots ────────────────────────────────────────
+
+    def save_portfolio_snapshot(self, strategy_id: int | None, avg_return_pct: float,
+                                open_positions: int, win_rate: float | None = None):
+        self.conn.execute(
+            """INSERT INTO portfolio_snapshots (strategy_id, snapshot_at, avg_return_pct,
+               open_positions, win_rate) VALUES (?, ?, ?, ?, ?)""",
+            (strategy_id, time.time(), avg_return_pct, open_positions, win_rate),
+        )
+        self.conn.commit()
+
+    def get_portfolio_snapshots(self, strategy_id: int | None = None,
+                                 since: float | None = None) -> list[dict]:
+        clauses, params = [], []
+        if strategy_id is not None:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        else:
+            clauses.append("strategy_id IS NULL")
+        if since:
+            clauses.append("snapshot_at >= ?")
+            params.append(since)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM portfolio_snapshots{where} ORDER BY snapshot_at ASC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── Strategy Stats ─────────────────────────────────────────────
+
+    def get_strategy_stats(self, strategy_id: int) -> dict:
+        closed = self.conn.execute(
+            "SELECT * FROM trades WHERE strategy_id = ? AND status = 'closed' ORDER BY exit_at ASC",
+            (strategy_id,),
+        ).fetchall()
+        open_trades = self.conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE strategy_id = ? AND status = 'open'",
+            (strategy_id,),
+        ).fetchone()[0]
+
+        total = len(closed)
+        if total == 0:
+            return {
+                "total_trades": 0, "open_trades": open_trades,
+                "wins": 0, "losses": 0, "win_rate": None,
+                "avg_return_pct": None, "avg_win_pct": None, "avg_loss_pct": None,
+                "profit_factor": None, "best_trade_pct": None, "worst_trade_pct": None,
+                "max_consecutive_wins": 0, "max_consecutive_losses": 0,
+                "avg_holding_seconds": None,
+            }
+
+        wins = [dict(r) for r in closed if r["realized_pnl_pct"] > 0]
+        losses = [dict(r) for r in closed if r["realized_pnl_pct"] <= 0]
+        pnls = [r["realized_pnl_pct"] for r in closed]
+
+        win_rate = len(wins) / total if total > 0 else 0
+        avg_return = sum(pnls) / total
+        avg_win = sum(w["realized_pnl_pct"] for w in wins) / len(wins) if wins else None
+        avg_loss = sum(l["realized_pnl_pct"] for l in losses) / len(losses) if losses else None
+        total_wins_pct = sum(w["realized_pnl_pct"] for w in wins)
+        total_losses_pct = abs(sum(l["realized_pnl_pct"] for l in losses))
+        profit_factor = (total_wins_pct / total_losses_pct) if total_losses_pct > 0 else None
+
+        # Max consecutive wins/losses
+        max_con_wins = max_con_losses = cur_wins = cur_losses = 0
+        for r in closed:
+            if r["realized_pnl_pct"] > 0:
+                cur_wins += 1
+                cur_losses = 0
+            else:
+                cur_losses += 1
+                cur_wins = 0
+            max_con_wins = max(max_con_wins, cur_wins)
+            max_con_losses = max(max_con_losses, cur_losses)
+
+        holdings = [r["holding_seconds"] for r in closed if r["holding_seconds"] is not None]
+        avg_holding = sum(holdings) / len(holdings) if holdings else None
+
+        return {
+            "total_trades": total,
+            "open_trades": open_trades,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 4),
+            "avg_return_pct": round(avg_return, 4),
+            "avg_win_pct": round(avg_win, 4) if avg_win is not None else None,
+            "avg_loss_pct": round(avg_loss, 4) if avg_loss is not None else None,
+            "profit_factor": round(profit_factor, 4) if profit_factor is not None else None,
+            "best_trade_pct": round(max(pnls), 4),
+            "worst_trade_pct": round(min(pnls), 4),
+            "max_consecutive_wins": max_con_wins,
+            "max_consecutive_losses": max_con_losses,
+            "avg_holding_seconds": round(avg_holding, 1) if avg_holding is not None else None,
+        }
+
+    # ── Price History ─────────────────────────────────────────────
+
+    def save_price_history(self, rows: list[dict]):
+        """Bulk insert OHLCV rows. Each dict: ticker, timestamp, open, high, low, close, volume."""
+        now = time.time()
+        for r in rows:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO price_history
+                   (ticker, timestamp, open, high, low, close, volume, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (r["ticker"], r["timestamp"], r.get("open"), r.get("high"),
+                 r.get("low"), r.get("close"), r.get("volume"), now),
+            )
+        self.conn.commit()
+
+    def get_price_at(self, ticker: str, ts: float) -> dict | None:
+        """Get closest price <= ts for a ticker."""
+        row = self.conn.execute(
+            """SELECT * FROM price_history
+               WHERE ticker = ? AND timestamp <= ?
+               ORDER BY timestamp DESC LIMIT 1""",
+            (ticker.upper(), ts),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_price_range(self, ticker: str, start: float, end: float) -> list[dict]:
+        """Get all price rows for a ticker in a time range."""
+        rows = self.conn.execute(
+            """SELECT * FROM price_history
+               WHERE ticker = ? AND timestamp >= ? AND timestamp <= ?
+               ORDER BY timestamp ASC""",
+            (ticker.upper(), start, end),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_price_history_extent(self, ticker: str) -> dict | None:
+        """Get earliest and latest price timestamps for a ticker."""
+        row = self.conn.execute(
+            """SELECT MIN(timestamp) as earliest, MAX(timestamp) as latest,
+                      COUNT(*) as count
+               FROM price_history WHERE ticker = ?""",
+            (ticker.upper(),),
+        ).fetchone()
+        if row and row["count"] > 0:
+            return dict(row)
+        return None
+
+    # ── Bot Strategy Methods ──────────────────────────────────────
+
+    def get_strategy_by_bot_id(self, bot_id: str) -> dict | None:
+        """Get the strategy linked to a bot."""
+        row = self.conn.execute(
+            "SELECT * FROM strategies WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def create_bot_strategy(self, bot_id: str, title: str, description: str = "",
+                            color: str = "#6366f1") -> dict:
+        """Create a strategy tagged with a bot_id."""
+        now = time.time()
+        cur = self.conn.execute(
+            """INSERT INTO strategies (title, description, color, bot_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (title, description, color, bot_id, now, now),
+        )
+        self.conn.commit()
+        return self.get_strategy(cur.lastrowid)
+
+    def set_live_trading(self, strategy_id: int, enabled: bool):
+        """Toggle live_trading flag on a strategy."""
+        self.conn.execute(
+            "UPDATE strategies SET live_trading = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, time.time(), strategy_id),
+        )
+        self.conn.commit()
+
+    def set_last_evaluated(self, strategy_id: int, ts: float | None = None):
+        """Update last_evaluated_at timestamp."""
+        self.conn.execute(
+            "UPDATE strategies SET last_evaluated_at = ?, updated_at = ? WHERE id = ?",
+            (ts or time.time(), time.time(), strategy_id),
+        )
+        self.conn.commit()
+
+    def clear_strategy_trades(self, strategy_id: int):
+        """Delete all trades for a strategy (used before backtest)."""
+        self.conn.execute("DELETE FROM trades WHERE strategy_id = ?", (strategy_id,))
+        self.conn.execute("DELETE FROM portfolio_snapshots WHERE strategy_id = ?", (strategy_id,))
+        self.conn.commit()
+
+    # ── Mention Aggregation for Bots ──────────────────────────────
+
+    def get_mention_counts(self, ticker: str, eval_time: float,
+                           windows: list[float]) -> dict[float, int]:
+        """Count mentions in each time window (seconds back from eval_time)."""
+        result = {}
+        for w in windows:
+            cutoff = eval_time - w
+            row = self.conn.execute(
+                "SELECT COUNT(*) as cnt FROM ticker_mentions WHERE ticker = ? AND created_utc >= ? AND created_utc <= ?",
+                (ticker.upper(), cutoff, eval_time),
+            ).fetchone()
+            result[w] = row["cnt"] if row else 0
+        return result
+
+    def get_author_counts(self, ticker: str, eval_time: float,
+                          windows: list[float]) -> dict[float, int]:
+        """Count unique authors mentioning ticker in each time window."""
+        result = {}
+        for w in windows:
+            cutoff = eval_time - w
+            row = self.conn.execute(
+                """SELECT COUNT(DISTINCT author) as cnt FROM (
+                    SELECT p.author FROM ticker_mentions tm
+                    JOIN posts p ON tm.source_type = 'post' AND tm.source_id = p.id
+                    WHERE tm.ticker = ? AND tm.created_utc >= ? AND tm.created_utc <= ?
+                    UNION ALL
+                    SELECT c.author FROM ticker_mentions tm
+                    JOIN comments c ON tm.source_type = 'comment' AND tm.source_id = c.id
+                    WHERE tm.ticker = ? AND tm.created_utc >= ? AND tm.created_utc <= ?
+                )""",
+                (ticker.upper(), cutoff, eval_time,
+                 ticker.upper(), cutoff, eval_time),
+            ).fetchone()
+            result[w] = row["cnt"] if row else 0
+        return result
+
+    # ── Backtest Runs ─────────────────────────────────────────────
+
+    def create_backtest_run(self, strategy_id: int, bot_id: str,
+                            start_date: str, end_date: str) -> dict:
+        """Create a new backtest run record."""
+        now = time.time()
+        cur = self.conn.execute(
+            """INSERT INTO backtest_runs (strategy_id, bot_id, status, started_at,
+               start_date, end_date)
+               VALUES (?, ?, 'running', ?, ?, ?)""",
+            (strategy_id, bot_id, now, start_date, end_date),
+        )
+        self.conn.commit()
+        return self.get_backtest_run(cur.lastrowid)
+
+    def update_backtest_run(self, run_id: int, **kwargs):
+        """Update backtest run fields."""
+        allowed = {"status", "completed_at", "error", "tickers_evaluated",
+                   "hours_evaluated", "total_hours", "trades_generated",
+                   "win_rate", "avg_return_pct", "total_trades"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        vals = list(updates.values()) + [run_id]
+        self.conn.execute(f"UPDATE backtest_runs SET {set_clause} WHERE id = ?", vals)
+        self.conn.commit()
+
+    def get_backtest_run(self, run_id: int) -> dict | None:
+        """Get a backtest run by ID."""
+        row = self.conn.execute(
+            "SELECT * FROM backtest_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_backtest_runs(self, bot_id: str | None = None,
+                           strategy_id: int | None = None) -> list[dict]:
+        """List backtest runs, optionally filtered."""
+        clauses, params = [], []
+        if bot_id:
+            clauses.append("bot_id = ?")
+            params.append(bot_id)
+        if strategy_id is not None:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM backtest_runs{where} ORDER BY started_at DESC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_open_trade_for_ticker_strategy(self, strategy_id: int, ticker: str) -> dict | None:
+        """Get the single open trade for a ticker in a strategy (bot use)."""
+        row = self.conn.execute(
+            """SELECT * FROM trades WHERE strategy_id = ? AND ticker = ? AND status = 'open'
+               ORDER BY entry_at DESC LIMIT 1""",
+            (strategy_id, ticker.upper()),
+        ).fetchone()
+        return dict(row) if row else None

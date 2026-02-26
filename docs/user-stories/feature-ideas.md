@@ -15,3 +15,6 @@ A running list of future feature ideas. Append new ideas here as they arise duri
 - **Fundamentals screening** — Dedicated screener page with multi-column filtering (sector, P/E range, market cap tier, etc.)
 - **Fundamentals history charts** — Plot how a ticker's P/E, market cap, or other metrics have changed over time using the `ticker_fundamentals` history table
 - **Sector heatmap** — Visual heatmap of tickers by sector, colored by daily % change, sized by mention count
+- **Bot performance dashboard** — Aggregate view comparing all bots' performance over time with equity curves overlay
+- **Market regime detection** — Feed market-wide stats (VIX, breadth, sector rotation) into bot data points for regime-aware strategies
+- **Bot alerts/notifications** — Push notifications (email, Slack, webhook) when a bot opens/closes trades or triggers stop loss

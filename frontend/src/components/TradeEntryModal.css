@@ -1,0 +1,204 @@
+.trade-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.trade-modal {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 14px;
+  width: 100%;
+  max-width: 440px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
+}
+
+.trade-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 0;
+}
+
+.trade-modal-header h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.trade-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.trade-modal-close:hover {
+  color: rgb(var(--hard-text));
+}
+
+.trade-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 22px 22px;
+}
+
+.trade-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+
+.trade-field label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+}
+
+.trade-field input,
+.trade-field select,
+.trade-field textarea {
+  background: rgba(var(--soft-border), 0.1);
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+
+.trade-field input:focus,
+.trade-field select:focus,
+.trade-field textarea:focus {
+  border-color: rgb(var(--accent));
+}
+
+.trade-field input:disabled {
+  opacity: 0.6;
+}
+
+.trade-field textarea {
+  resize: vertical;
+  min-height: 40px;
+}
+
+.trade-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.trade-suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  transition: background 0.1s;
+}
+
+.trade-suggestions button:hover {
+  background: rgba(var(--accent), 0.08);
+}
+
+.trade-suggest-ticker {
+  font-weight: 600;
+}
+
+.trade-suggest-count {
+  font-size: 0.75rem;
+  color: rgb(var(--soft-text));
+}
+
+.trade-direction-toggle {
+  display: flex;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.trade-dir-btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.trade-dir-btn:first-child {
+  border-right: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+}
+
+.trade-dir-btn.active.long {
+  background: rgba(52, 211, 153, 0.15);
+  color: rgb(52, 211, 153);
+}
+
+.trade-dir-btn.active.short {
+  background: rgba(248, 113, 113, 0.15);
+  color: rgb(248, 113, 113);
+}
+
+.trade-modal-error {
+  background: rgba(var(--color-error), 0.1);
+  border: 1px solid rgba(var(--color-error), 0.3);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: rgb(var(--color-error));
+  font-size: 0.82rem;
+}
+
+.trade-submit-btn {
+  background: rgb(var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.trade-submit-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.trade-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

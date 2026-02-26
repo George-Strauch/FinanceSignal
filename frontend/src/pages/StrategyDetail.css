@@ -1,0 +1,326 @@
+.sd-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.sd-loading,
+.sd-error {
+  color: rgb(var(--soft-text));
+  text-align: center;
+  padding: 60px 0;
+  font-size: 0.92rem;
+}
+
+/* Header */
+.sd-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sd-back {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px;
+  color: rgb(var(--hard-text));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: border-color 0.15s;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.sd-back:hover {
+  border-color: rgb(var(--accent));
+  color: rgb(var(--accent));
+}
+
+.sd-header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sd-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sd-color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.sd-title-row h1 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.sd-status-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sd-status-badge.active {
+  background: rgba(52, 211, 153, 0.12);
+  color: rgb(52, 211, 153);
+}
+
+.sd-status-badge.archived {
+  background: rgba(var(--soft-border), 0.2);
+  color: rgb(var(--soft-text));
+}
+
+.sd-description {
+  font-size: 0.88rem;
+  color: rgb(var(--soft-text));
+  margin: 4px 0 0;
+}
+
+.sd-notes {
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+  font-style: italic;
+  margin: 4px 0 0;
+}
+
+.sd-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sd-action-btn {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.sd-action-btn:hover {
+  border-color: rgb(var(--accent));
+  color: rgb(var(--accent));
+}
+
+.sd-archive-btn:hover {
+  border-color: rgb(248, 113, 113);
+  color: rgb(248, 113, 113);
+}
+
+/* Edit Form */
+.sd-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sd-edit-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.sd-edit-title {
+  flex: 1;
+  background: rgba(var(--soft-border), 0.1);
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  outline: none;
+  font-family: inherit;
+}
+
+.sd-edit-title:focus {
+  border-color: rgb(var(--accent));
+}
+
+.sd-edit-color {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 2px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.sd-edit-desc,
+.sd-edit-notes {
+  background: rgba(var(--soft-border), 0.1);
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.sd-edit-desc:focus,
+.sd-edit-notes:focus {
+  border-color: rgb(var(--accent));
+}
+
+.sd-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sd-save-btn {
+  background: rgb(var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sd-cancel-btn {
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 0.82rem;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+}
+
+/* Bot Managed Banner */
+.sd-bot-banner {
+  background: rgba(var(--accent), 0.08);
+  border: 1px solid rgba(var(--accent), 0.2);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.82rem;
+  color: rgb(var(--accent));
+  font-weight: 500;
+}
+
+/* Stats Grid */
+.sd-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.sd-stat {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sd-stat > span:first-child {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  font-variant-numeric: tabular-nums;
+}
+
+.sd-stat-label {
+  font-size: 0.68rem;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Sections */
+.sd-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.sd-section h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 16px;
+}
+
+.sd-chart {
+  width: 100%;
+}
+
+/* Tabs */
+.sd-trades-header {
+  margin-bottom: 16px;
+}
+
+.sd-tabs {
+  display: flex;
+  border-bottom: 2px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  gap: 0;
+}
+
+.sd-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sd-tab:hover {
+  color: rgb(var(--hard-text));
+}
+
+.sd-tab.active {
+  color: rgb(var(--accent));
+  border-bottom-color: rgb(var(--accent));
+}
+
+@media (max-width: 767px) {
+  .sd-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .sd-header {
+    flex-direction: column;
+  }
+
+  .sd-header-actions {
+    width: 100%;
+  }
+
+  .sd-action-btn {
+    flex: 1;
+    text-align: center;
+  }
+}

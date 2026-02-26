@@ -419,6 +419,39 @@ class ProcessManager:
                 state.request_delay = float(params["request_delay_seconds"])
             return state
 
+        if proc.id == "portfolio_snapshotter":
+            from app.portfolio_snapshotter import SnapshotterState
+            if proc.job_state is not None and isinstance(proc.job_state, SnapshotterState):
+                state = proc.job_state
+            else:
+                state = SnapshotterState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            return state
+
+        if proc.id == "bot_runner":
+            from app.bot_engine.runner import BotRunnerState
+            if proc.job_state is not None and isinstance(proc.job_state, BotRunnerState):
+                state = proc.job_state
+            else:
+                state = BotRunnerState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            return state
+
+        if proc.id == "price_archiver":
+            from app.price_archiver import PriceArchiverState
+            if proc.job_state is not None and isinstance(proc.job_state, PriceArchiverState):
+                state = proc.job_state
+            else:
+                state = PriceArchiverState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            params = proc.current_params
+            if "request_delay_seconds" in params:
+                state.request_delay = float(params["request_delay_seconds"])
+            return state
+
         return None
 
 

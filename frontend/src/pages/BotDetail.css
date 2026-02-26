@@ -1,0 +1,299 @@
+.bd-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.bd-loading,
+.bd-error {
+  color: rgb(var(--soft-text));
+  text-align: center;
+  padding: 40px;
+  font-size: 0.88rem;
+}
+
+/* Header */
+.bd-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.bd-back {
+  background: none;
+  border: none;
+  color: rgb(var(--soft-text));
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 6px;
+  margin-top: 2px;
+  border-radius: 6px;
+  transition: color 0.15s;
+}
+
+.bd-back:hover {
+  color: rgb(var(--accent));
+}
+
+.bd-header-info {
+  flex: 1;
+}
+
+.bd-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.bd-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bd-title-row h1 {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.bd-description {
+  color: rgb(var(--soft-text));
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.bd-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Reuse live toggle from Bots.css */
+.bd-page .bot-live-toggle {
+  font-size: 0.75rem;
+  padding: 6px 14px;
+}
+
+/* Stats Grid */
+.bd-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.bd-stat {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bd-stat > span:first-child {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-stat-label {
+  font-size: 0.68rem;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Sections */
+.bd-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.bd-section h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 16px;
+}
+
+.bd-chart {
+  margin: 0 -10px;
+}
+
+/* Backtest Controls */
+.bd-backtest-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bd-backtest-dates {
+  display: flex;
+  gap: 12px;
+}
+
+.bd-backtest-dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: rgb(var(--soft-text));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bd-backtest-dates input[type="date"] {
+  background: rgba(var(--soft-border), 0.1);
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: rgb(var(--hard-text));
+  font-size: 0.85rem;
+}
+
+.bd-backtest-run-btn {
+  background: rgb(var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.bd-backtest-run-btn:hover {
+  opacity: 0.9;
+}
+
+.bd-backtest-stop-btn {
+  background: rgb(248, 113, 113);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Progress Bar */
+.bd-backtest-progress {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bd-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(var(--soft-border), 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bd-progress-fill {
+  height: 100%;
+  background: rgb(var(--accent));
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.bd-progress-text {
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+}
+
+/* Backtest Results */
+.bd-backtest-result {
+  margin-top: 14px;
+  padding: 12px;
+  background: rgba(52, 211, 153, 0.06);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: 8px;
+}
+
+.bd-backtest-result-stats {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: rgb(var(--hard-text));
+}
+
+.bd-backtest-error {
+  margin-top: 14px;
+  padding: 12px;
+  background: rgba(248, 113, 113, 0.06);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: rgb(248, 113, 113);
+}
+
+/* Trades Tabs */
+.bd-trades-header {
+  margin-bottom: 12px;
+}
+
+.bd-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.bd-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.bd-tab:hover {
+  color: rgb(var(--hard-text));
+}
+
+.bd-tab.active {
+  color: rgb(var(--accent));
+  border-bottom-color: rgb(var(--accent));
+}
+
+@media (max-width: 767px) {
+  .bd-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .bd-backtest-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bd-backtest-dates {
+    flex-direction: column;
+  }
+
+  .bd-backtest-result-stats {
+    flex-direction: column;
+    gap: 6px;
+  }
+}

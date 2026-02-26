@@ -20,6 +20,8 @@ from app.routers.ticker_tags import router as ticker_tags_router
 from app.routers.entities import router as entities_router
 from app.routers.reddit_stats import router as reddit_stats_router
 from app.routers.fundamentals import router as fundamentals_router
+from app.routers.trading import router as trading_router
+from app.routers.bots import router as bots_router
 
 app_start_time: float = 0.0
 
@@ -30,6 +32,11 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     global app_start_time
     app_start_time = time.time()
+    # Discover bots and ensure strategies exist before starting processes
+    from app.bot_engine.discovery import discover_bots, ensure_bot_strategies
+    bots = discover_bots()
+    if bots:
+        ensure_bot_strategies(bots)
     from app.process_manager import process_manager
     process_manager.load_jobs()
     await process_manager.auto_start()
@@ -53,6 +60,8 @@ app.include_router(ticker_tags_router)
 app.include_router(entities_router)
 app.include_router(reddit_stats_router)
 app.include_router(fundamentals_router)
+app.include_router(trading_router)
+app.include_router(bots_router)
 
 app.add_middleware(
     CORSMiddleware,

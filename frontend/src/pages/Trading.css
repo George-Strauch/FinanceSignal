@@ -1,0 +1,328 @@
+.trading-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.trading-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.trading-header h1 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.trading-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.trading-new-strat-btn {
+  background: rgb(52, 211, 153);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.trading-new-strat-btn:hover {
+  opacity: 0.9;
+}
+
+.trading-new-trade-btn {
+  background: rgb(var(--accent));
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.trading-new-trade-btn:hover {
+  opacity: 0.9;
+}
+
+.trading-color-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trading-color-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.trading-color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.trading-color-swatch.active {
+  border-color: rgb(var(--hard-text));
+}
+
+.trading-history-btn {
+  background: transparent;
+  color: rgb(var(--soft-text));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.trading-history-btn:hover {
+  border-color: rgb(var(--accent));
+  color: rgb(var(--accent));
+}
+
+/* Summary Cards */
+.trading-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.trading-summary-card {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+}
+
+.trading-summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  line-height: 1.2;
+}
+
+.trading-summary-label {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Sections */
+.trading-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.trading-section h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 16px;
+}
+
+.trading-loading {
+  color: rgb(var(--soft-text));
+  text-align: center;
+  padding: 20px;
+  font-size: 0.88rem;
+}
+
+.trading-empty {
+  color: rgb(var(--soft-text));
+  text-align: center;
+  padding: 20px;
+  font-size: 0.88rem;
+}
+
+/* Strategy Comparison */
+.trading-strat-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trading-strat-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trading-strat-compare-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+  flex-shrink: 0;
+}
+
+.trading-strat-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.trading-strat-name-link {
+  background: none;
+  border: none;
+  color: rgb(var(--hard-text));
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.trading-strat-name-link:hover {
+  color: rgb(var(--accent));
+}
+
+.trading-strat-compare-bar-track {
+  flex: 1;
+  height: 8px;
+  background: rgba(var(--soft-border), 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.trading-strat-compare-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.trading-strat-compare-stats {
+  display: flex;
+  gap: 16px;
+  min-width: 160px;
+  justify-content: flex-end;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--hard-text));
+}
+
+/* Strategy Grid */
+.trading-strat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.trading-strat-card {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-top: 3px solid;
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.trading-strat-card:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.trading-strat-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.trading-strat-card-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trading-bot-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: rgba(var(--accent), 0.15);
+  color: rgb(var(--accent));
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.trading-strat-card-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.trading-strat-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.trading-strat-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trading-strat-metric > span:first-child {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  font-variant-numeric: tabular-nums;
+}
+
+.trading-strat-metric-label {
+  font-size: 0.68rem;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 767px) {
+  .trading-summary-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .trading-strat-compare-name {
+    min-width: 100px;
+  }
+
+  .trading-strat-compare-stats {
+    min-width: 120px;
+    gap: 10px;
+    font-size: 0.78rem;
+  }
+
+  .trading-strat-grid {
+    grid-template-columns: 1fr;
+  }
+}
