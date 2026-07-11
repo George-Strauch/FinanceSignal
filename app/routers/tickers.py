@@ -932,7 +932,7 @@ def ticker_detail(
         window_label = window.value
 
     bucket_fmt = _bucket_format(window_label)
-    upper_cond = "AND created_utc <= ?" if upper is not None else ""
+    upper_cond = "AND tm.created_utc <= ?" if upper is not None else ""
     upper_params = [upper] if upper is not None else []
 
     if count_mode == CountMode.authors:
