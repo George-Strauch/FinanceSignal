@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
@@ -203,4 +203,124 @@ def mentions_by_subreddit(
         "range": range.value,
         "count_mode": count_mode.value,
         "mentions": mentions,
+    }
+
+
+GRANULARITY_SECONDS = {
+    "hour": 3600,
+    "day": 86400,
+    "week": 604800,
+    "month": 2592000,
+}
+
+
+class HistogramGranularity(str, Enum):
+    hour = "hour"
+    day = "day"
+    week = "week"
+    month = "month"
+
+
+def _histogram_bucket(unix_ts: float, granularity: str) -> str:
+    dt = datetime.fromtimestamp(unix_ts, tz=ET)
+    if granularity == "hour":
+        return dt.strftime("%Y-%m-%dT%H:00:00")
+    elif granularity == "week":
+        from datetime import timedelta
+        monday = dt - timedelta(days=dt.weekday())
+        return monday.strftime("%Y-%m-%d")
+    elif granularity == "month":
+        return dt.strftime("%Y-%m")
+    return dt.strftime("%Y-%m-%d")
+
+
+def _histogram_label(bucket: str, granularity: str) -> str:
+    if granularity == "hour":
+        dt = datetime.strptime(bucket, "%Y-%m-%dT%H:00:00")
+        return dt.strftime("%b %d, %I:00 %p")
+    elif granularity == "week":
+        dt = datetime.strptime(bucket, "%Y-%m-%d")
+        return dt.strftime("Week of %b %d")
+    elif granularity == "month":
+        dt = datetime.strptime(bucket, "%Y-%m")
+        return dt.strftime("%b %Y")
+    dt = datetime.strptime(bucket, "%Y-%m-%d")
+    return dt.strftime("%b %d")
+
+
+def _histogram_to_date(bucket: str, granularity: str) -> str:
+    if granularity == "hour":
+        return bucket[:10]
+    elif granularity == "week":
+        return bucket
+    elif granularity == "month":
+        dt = datetime.strptime(bucket, "%Y-%m")
+        return dt.strftime("%Y-%m-01")
+    return bucket
+
+
+@router.get("/histogram")
+def collection_histogram(
+    granularity: HistogramGranularity = HistogramGranularity.day,
+    start: str | None = Query(None, description="Start date YYYY-MM-DD"),
+    end: str | None = Query(None, description="End date YYYY-MM-DD (default: today)"),
+    db: RedditDatabase = Depends(get_db),
+):
+    from datetime import time as dt_time, timedelta
+
+    end_date = datetime.now(ET).date()
+    if end:
+        try:
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            end_date = datetime.now(ET).date()
+
+    if start:
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+        except ValueError:
+            start_date = end_date
+    else:
+        row = db.conn.execute("SELECT MIN(created_utc) FROM ticker_mentions").fetchone()
+        if row and row[0]:
+            start_date = datetime.fromtimestamp(row[0], tz=ET).date()
+        else:
+            start_date = end_date
+
+    start_ts = datetime.combine(start_date, dt_time.min, tzinfo=ET).timestamp()
+    end_ts = datetime.combine(end_date + timedelta(days=1), dt_time.min, tzinfo=ET).timestamp()
+
+    gran = granularity.value
+
+    rows = db.conn.execute(
+        """
+        SELECT created_utc, COUNT(*) AS cnt
+        FROM ticker_mentions
+        WHERE created_utc >= ? AND created_utc < ?
+        GROUP BY created_utc
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+
+    raw_counts: dict[str, int] = {}
+    for r in rows:
+        bucket = _histogram_bucket(r["created_utc"], gran)
+        raw_counts[bucket] = raw_counts.get(bucket, 0) + r["cnt"]
+
+    buckets = sorted(raw_counts.keys())
+    bins = [
+        {
+            "bucket": b,
+            "label": _histogram_label(b, gran),
+            "count": raw_counts[b],
+            "date": _histogram_to_date(b, gran),
+        }
+        for b in buckets
+    ]
+
+    return {
+        "granularity": gran,
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+        "bins": bins,
     }

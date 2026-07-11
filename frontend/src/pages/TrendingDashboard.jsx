@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AreaChart, Area, ResponsiveContainer } from 'recharts'
-import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart, FiArrowRight, FiFilter } from 'react-icons/fi'
+import { FiGrid, FiList, FiRefreshCw, FiTrendingUp, FiTrendingDown, FiMinus, FiBarChart, FiArrowRight } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
+import TagFilterButton from '../components/TagFilterButton'
 import './TrendingDashboard.css'
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '1M', '3M', '6M', '1Y']
@@ -153,8 +154,6 @@ export default function TrendingDashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [hiddenTags, setHiddenTags] = usePersistedState('trending-hidden-tags', [])
   const [allTagSets, setAllTagSets] = useState([])
-  const [filterOpen, setFilterOpen] = useState(false)
-  const filterRef = useRef(null)
   const intervalRef = useRef(null)
 
   const countModeLabel = COUNT_MODES.find((m) => m.value === countMode)?.label.toLowerCase() || 'mentions'
@@ -182,15 +181,6 @@ export default function TrendingDashboard() {
   // Fetch tag sets for filter
   useEffect(() => {
     get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
-  }, [])
-
-  // Close filter dropdown on click outside
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (filterRef.current && !filterRef.current.contains(e.target)) setFilterOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
   // Auto-refresh
@@ -333,38 +323,12 @@ export default function TrendingDashboard() {
             {autoRefresh && <span className="countdown">{countdown}s</span>}
           </button>
           {allTagSets.length > 0 && (
-            <div className="tag-filter-wrap" ref={filterRef}>
-              <button
-                className={`toggle-btn tag-filter-btn ${hiddenTags.length > 0 ? 'active' : ''}`}
-                onClick={() => setFilterOpen((v) => !v)}
-                title="Filter by tags"
-              >
-                <FiFilter />
-                {hiddenTags.length > 0 && <span className="tag-filter-count">{hiddenTags.length}</span>}
-              </button>
-              {filterOpen && (
-                <div className="tag-filter-dropdown">
-                  <div className="tag-filter-title">Hide tickers tagged as:</div>
-                  {allTagSets.map((ts) => (
-                    <label key={ts.id} className="tag-filter-item">
-                      <input
-                        type="checkbox"
-                        checked={hiddenTags.includes(ts.id)}
-                        onChange={() => toggleTag(ts.id)}
-                      />
-                      <span className="tag-filter-swatch" style={{ backgroundColor: ts.color }} />
-                      <span>{ts.name}</span>
-                      <span className="tag-filter-ticker-count">{ts.tickers.length}</span>
-                    </label>
-                  ))}
-                  {hiddenTags.length > 0 && (
-                    <button className="tag-filter-clear" onClick={() => setHiddenTags([])}>
-                      Clear filters
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+            <TagFilterButton
+              tagSets={allTagSets}
+              hiddenTagIds={hiddenTags}
+              onToggleTag={toggleTag}
+              onClearTags={() => setHiddenTags([])}
+            />
           )}
         </div>
       </div>

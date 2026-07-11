@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FiSearch, FiClock, FiChevronLeft, FiChevronRight, FiFilter } from 'react-icons/fi'
+import { FiSearch, FiClock, FiChevronLeft, FiChevronRight } from 'react-icons/fi'
 import { get } from '../api/client'
+import TagFilterButton from '../components/TagFilterButton'
 import './Tickers.css'
 
 const RECENT_KEY = 'recent-ticker-visits'
@@ -37,12 +38,7 @@ export default function Tickers() {
   const [sortDir, setSortDir] = useState('desc')
 
   const [allTagSets, setAllTagSets] = useState([])
-  const [allSectors, setAllSectors] = useState([])
-  const [filterTagId, setFilterTagId] = useState(null)
-  const [filterSector, setFilterSector] = useState(null)
-  const [filterMinMentions, setFilterMinMentions] = useState('')
-  const [filterOpen, setFilterOpen] = useState(false)
-  const filterRef = useRef(null)
+  const [hiddenTags, setHiddenTags] = useState([])
 
   useEffect(() => {
     setRecentTickers(getRecentTickers())
@@ -50,15 +46,6 @@ export default function Tickers() {
 
   useEffect(() => {
     get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
-    get('/tickers/sectors').then((res) => setAllSectors(res.sectors)).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const handleClick = (e) => {
-      if (filterRef.current && !filterRef.current.contains(e.target)) setFilterOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
   const fetchDirectory = useCallback(async () => {
@@ -71,9 +58,6 @@ export default function Tickers() {
         order: sortDir,
       })
       if (query.trim()) params.set('q', query.trim().toUpperCase())
-      if (filterTagId != null) params.set('tag_id', String(filterTagId))
-      if (filterSector) params.set('sector', filterSector)
-      if (filterMinMentions) params.set('min_mentions', String(filterMinMentions))
       const res = await get(`/tickers/directory?${params}`)
       setDirectory(res.tickers)
       setTotalCount(res.total_count)
@@ -83,7 +67,7 @@ export default function Tickers() {
     } finally {
       setDirLoading(false)
     }
-  }, [page, sortKey, sortDir, query, filterTagId, filterSector, filterMinMentions])
+  }, [page, sortKey, sortDir, query])
 
   useEffect(() => {
     if (!searchLoading) fetchDirectory()
@@ -137,16 +121,28 @@ export default function Tickers() {
     return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
   }
 
+  const toggleTag = (tagId) => {
+    setHiddenTags((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    )
+  }
+
   const showingSearch = results !== null
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
-  const hasFilters = filterTagId != null || filterSector || filterMinMentions
 
-  const clearFilters = () => {
-    setFilterTagId(null)
-    setFilterSector(null)
-    setFilterMinMentions('')
-    setPage(1)
-  }
+  const filteredDirectory = directory
+    ? directory.filter((t) => {
+        if (hiddenTags.length === 0) return true
+        return !t.tags?.some((tag) => hiddenTags.includes(tag.id))
+      })
+    : []
+
+  const filteredResults = results
+    ? results.filter((t) => {
+        if (hiddenTags.length === 0) return true
+        return !t.tags?.some((tag) => hiddenTags.includes(tag.id))
+      })
+    : null
 
   return (
     <div className="tickers-page">
@@ -166,15 +162,15 @@ export default function Tickers() {
         </div>
       </div>
 
-      {showingSearch && results?.length === 0 && (
+      {showingSearch && filteredResults?.length === 0 && (
         <p className="tickers-empty">No tickers matching "{query}"</p>
       )}
 
       {searchLoading && !results && <p className="tickers-loading">Searching...</p>}
 
-      {showingSearch && results?.length > 0 && (
+      {showingSearch && filteredResults?.length > 0 && (
         <div className="tickers-results-list">
-          {results.map((t) => (
+          {filteredResults.map((t) => (
             <div
               key={t.ticker}
               className="tickers-result-row"
@@ -225,89 +221,27 @@ export default function Tickers() {
             <div className="tickers-section-label">
               All Tickers <span className="tickers-total-count">({totalCount.toLocaleString()})</span>
             </div>
-            {(allTagSets.length > 0 || allSectors.length > 0) && (
-              <div className="tag-filter-wrap" ref={filterRef}>
-                <button
-                  className={`toggle-btn tag-filter-btn ${hasFilters ? 'active' : ''}`}
-                  onClick={() => setFilterOpen((v) => !v)}
-                  title="Filters"
-                >
-                  <FiFilter />
-                  {hasFilters && <span className="tag-filter-count">
-                    {[filterTagId, filterSector, filterMinMentions].filter(Boolean).length}
-                  </span>}
-                </button>
-                {filterOpen && (
-                  <div className="tag-filter-dropdown tickers-filter-dropdown">
-                    <div className="tag-filter-title">Filters</div>
-
-                    {allTagSets.length > 0 && (
-                      <div className="tickers-filter-group">
-                        <label className="tickers-filter-label">Tag</label>
-                        <select
-                          className="tickers-filter-select"
-                          value={filterTagId ?? ''}
-                          onChange={(e) => { setFilterTagId(e.target.value ? Number(e.target.value) : null); setPage(1) }}
-                        >
-                          <option value="">All</option>
-                          {allTagSets.map((ts) => (
-                            <option key={ts.id} value={ts.id}>{ts.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    {allSectors.length > 0 && (
-                      <div className="tickers-filter-group">
-                        <label className="tickers-filter-label">Sector</label>
-                        <select
-                          className="tickers-filter-select"
-                          value={filterSector ?? ''}
-                          onChange={(e) => { setFilterSector(e.target.value || null); setPage(1) }}
-                        >
-                          <option value="">All</option>
-                          {allSectors.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="tickers-filter-group">
-                      <label className="tickers-filter-label">Min Mentions</label>
-                      <input
-                        type="number"
-                        className="tickers-filter-input"
-                        placeholder="0"
-                        value={filterMinMentions}
-                        onChange={(e) => { setFilterMinMentions(e.target.value); setPage(1) }}
-                      />
-                    </div>
-
-                    {hasFilters && (
-                      <button className="tag-filter-clear" onClick={clearFilters}>
-                        Clear filters
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            <TagFilterButton
+              tagSets={allTagSets}
+              hiddenTagIds={hiddenTags}
+              onToggleTag={toggleTag}
+              onClearTags={() => setHiddenTags([])}
+            />
           </div>
 
           {dirLoading && <p className="tickers-loading">Loading tickers...</p>}
 
-          {!dirLoading && directory?.length === 0 && (
+          {!dirLoading && filteredDirectory.length === 0 && (
             <div className="tickers-empty-state">
               <FiSearch className="tickers-empty-icon" />
-              <p>No tickers found{hasFilters ? ' with current filters' : ''}.</p>
-              {hasFilters && (
-                <button className="tickers-clear-btn" onClick={clearFilters}>Clear filters</button>
+              <p>{hiddenTags.length > 0 ? 'All tickers are filtered out.' : 'No tickers found.'}</p>
+              {hiddenTags.length > 0 && (
+                <button className="tickers-clear-btn" onClick={() => setHiddenTags([])}>Clear filters</button>
               )}
             </div>
           )}
 
-          {!dirLoading && directory?.length > 0 && (
+          {!dirLoading && filteredDirectory.length > 0 && (
             <>
               <div className="tickers-table-wrap">
                 <table className="tickers-dir-table">
@@ -328,7 +262,7 @@ export default function Tickers() {
                     </tr>
                   </thead>
                   <tbody>
-                    {directory.map((t) => (
+                    {filteredDirectory.map((t) => (
                       <tr
                         key={t.ticker}
                         onClick={() => goToTicker(t.ticker)}

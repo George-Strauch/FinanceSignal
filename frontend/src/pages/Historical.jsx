@@ -1,14 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  AreaChart, Area, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area,
 } from 'recharts'
 import { FiChevronLeft, FiChevronRight, FiTrendingUp, FiTrendingDown, FiMinus, FiArrowRight, FiAlertTriangle } from 'react-icons/fi'
 import { get } from '../api/client'
+import TagFilterButton from '../components/TagFilterButton'
 import './Historical.css'
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const GRANULARITIES = [
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+]
 
 function todayET() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
@@ -70,35 +77,60 @@ function formatLargeNum(n) {
   return `$${n.toLocaleString()}`
 }
 
-function HealthBar({ days, selectedDate, onSelectDate }) {
-  if (!days || days.length === 0) return null
-  const maxCount = Math.max(...days.map((d) => d.mention_count), 1)
+function HistogramChart({ bins, selectedDate, onBarClick }) {
+  if (!bins || bins.length === 0) {
+    return <div className="histogram-empty">No collection data available.</div>
+  }
+
+  const data = bins.map((b) => ({
+    ...b,
+    isSelected: b.date === selectedDate,
+  }))
+
+  const handleClick = (data) => {
+    if (data && data.date) {
+      onBarClick(data.date)
+    }
+  }
 
   return (
-    <div className="health-bar-wrap">
-      <div className="health-bar-title">Collection Health — Last {days.length} Days</div>
-      <div className="health-bar">
-        {days.map((d) => {
-          const height = Math.max(2, (d.mention_count / maxCount) * 40)
-          const isSelected = d.date === selectedDate
-          return (
-            <div
-              key={d.date}
-              className={`health-bar-day ${d.status} ${isSelected ? 'selected' : ''}`}
-              title={`${d.date}: ${d.mention_count.toLocaleString()} mentions (${d.status})`}
-              onClick={() => onSelectDate(d.date)}
-            >
-              <div className="health-bar-col" style={{ height: `${height}px` }} />
-            </div>
-          )
-        })}
-      </div>
-      <div className="health-bar-legend">
-        <span className="health-legend-item healthy">Healthy</span>
-        <span className="health-legend-item low">Low</span>
-        <span className="health-legend-item gap"><FiAlertTriangle /> Gap</span>
-      </div>
-    </div>
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data} margin={{ top: 8, right: 10, left: 0, bottom: 20 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.2)" />
+        <XAxis
+          dataKey="label"
+          tick={{ fill: 'rgb(var(--soft-text))', fontSize: 10 }}
+          stroke="rgba(var(--soft-border), 0.4)"
+          minTickGap={20}
+          angle={-30}
+          textAnchor="end"
+          height={50}
+        />
+        <YAxis
+          allowDecimals={false}
+          tick={{ fill: 'rgb(var(--soft-text))', fontSize: 11 }}
+          stroke="rgba(var(--soft-border), 0.4)"
+        />
+        <Tooltip
+          contentStyle={{
+            background: 'rgb(var(--primary-color))',
+            border: '1px solid rgba(var(--soft-border), var(--soft-border-alpha))',
+            borderRadius: 8,
+            fontSize: '0.82rem',
+          }}
+          formatter={(value) => [value.toLocaleString(), 'Posts Collected']}
+        />
+        <Bar
+          dataKey="count"
+          name="Posts"
+          fill="rgba(var(--accent), 0.5)"
+          stroke="rgba(var(--accent), 0.8)"
+          isAnimationActive={false}
+          cursor="pointer"
+          onClick={handleClick}
+        />
+      </BarChart>
+    </ResponsiveContainer>
   )
 }
 
@@ -160,7 +192,7 @@ function Calendar({ selectedDate, healthMap, onSelectDate, earliestDate, latestD
               <div
                 className={`calendar-day ${cell.date === selectedDate ? 'selected' : ''} ${cell.health?.status || ''}`}
                 onClick={() => onSelectDate(cell.date)}
-                title={cell.health ? `${cell.mention_count || cell.health.mention_count} mentions` : ''}
+                title={cell.health ? `${cell.health.mention_count} mentions` : ''}
               >
                 {cell.day}
                 {cell.health?.status === 'gap' && <span className="calendar-gap-dot" />}
@@ -181,18 +213,22 @@ function Calendar({ selectedDate, healthMap, onSelectDate, earliestDate, latestD
 export default function Historical() {
   const navigate = useNavigate()
   const [selectedDate, setSelectedDate] = useState(todayET)
-  const [healthDays, setHealthDays] = useState(null)
   const [healthMap, setHealthMap] = useState(null)
   const [trending, setTrending] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [earliestDate, setEarliestDate] = useState(null)
   const [latestDate, setLatestDate] = useState(null)
+  const [histogramBins, setHistogramBins] = useState(null)
+  const [histogramStart, setHistogramStart] = useState('')
+  const [histogramGranularity, setHistogramGranularity] = useState('day')
+
+  const [allTagSets, setAllTagSets] = useState([])
+  const [hiddenTags, setHiddenTags] = useState([])
 
   const fetchHealth = useCallback(async () => {
     try {
       const res = await get('/system/collection-health?days=90')
-      setHealthDays(res.days)
       setEarliestDate(res.earliest_date)
       setLatestDate(res.latest_date)
       const map = new Map()
@@ -201,9 +237,23 @@ export default function Historical() {
       }
       setHealthMap(map)
     } catch {
-      setHealthDays([])
+      setHealthMap(new Map())
     }
   }, [])
+
+  const fetchHistogram = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ granularity: histogramGranularity })
+      if (histogramStart) params.set('start', histogramStart)
+      const res = await get(`/mentions/histogram?${params}`)
+      setHistogramBins(res.bins)
+      if (!histogramStart && res.start) {
+        setHistogramStart(res.start)
+      }
+    } catch {
+      setHistogramBins([])
+    }
+  }, [histogramGranularity, histogramStart])
 
   const fetchTrending = useCallback(async (date) => {
     setLoading(true)
@@ -224,16 +274,41 @@ export default function Historical() {
   }, [fetchHealth])
 
   useEffect(() => {
+    fetchHistogram()
+  }, [fetchHistogram])
+
+  useEffect(() => {
     fetchTrending(selectedDate)
   }, [selectedDate, fetchTrending])
 
+  useEffect(() => {
+    get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
+  }, [])
+
   const handleSelectDate = (date) => {
+    setSelectedDate(date)
+  }
+
+  const handleHistogramClick = (date) => {
     setSelectedDate(date)
   }
 
   const goToTicker = (ticker, date) => {
     navigate(`/tickers/${ticker}?date=${date}`)
   }
+
+  const toggleTag = (tagId) => {
+    setHiddenTags((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    )
+  }
+
+  const filteredTrending = trending?.tickers
+    ? trending.tickers.filter((t) => {
+        if (hiddenTags.length === 0) return true
+        return !t.tags?.some((tag) => hiddenTags.includes(tag.id))
+      })
+    : []
 
   return (
     <div className="historical-page">
@@ -246,8 +321,8 @@ export default function Historical() {
         </div>
       </div>
 
-      <div className="historical-layout">
-        <div className="historical-left-panel">
+      <div className="historical-top-section">
+        <div className="historical-calendar-panel">
           <Calendar
             selectedDate={selectedDate}
             healthMap={healthMap}
@@ -255,84 +330,117 @@ export default function Historical() {
             earliestDate={earliestDate}
             latestDate={latestDate}
           />
-          {healthDays && (
-            <HealthBar
-              days={healthDays}
+        </div>
+        <div className="historical-histogram-panel">
+          <div className="histogram-controls">
+            <div className="histogram-control-group">
+              <label className="histogram-control-label">Start</label>
+              <input
+                type="date"
+                className="histogram-date-input"
+                value={histogramStart}
+                onChange={(e) => setHistogramStart(e.target.value)}
+              />
+            </div>
+            <div className="histogram-control-group">
+              <label className="histogram-control-label">Granularity</label>
+              <select
+                className="histogram-granularity-select"
+                value={histogramGranularity}
+                onChange={(e) => setHistogramGranularity(e.target.value)}
+              >
+                {GRANULARITIES.map((g) => (
+                  <option key={g.value} value={g.value}>{g.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="histogram-chart-wrap">
+            <HistogramChart
+              bins={histogramBins}
               selectedDate={selectedDate}
-              onSelectDate={handleSelectDate}
+              onBarClick={handleHistogramClick}
             />
-          )}
+          </div>
+        </div>
+      </div>
+
+      <div className="historical-bottom-section">
+        <div className="historical-table-header">
+          <div className="historical-trending-title">
+            Trending Tickers — {selectedDate}
+            {filteredTrending.length > 0 && <span className="hist-trending-count">({filteredTrending.length})</span>}
+          </div>
+          <TagFilterButton
+            tagSets={allTagSets}
+            hiddenTagIds={hiddenTags}
+            onToggleTag={toggleTag}
+            onClearTags={() => setHiddenTags([])}
+          />
         </div>
 
-        <div className="historical-right-panel">
-          {loading && <div className="historical-loading">Loading trending tickers for {selectedDate}...</div>}
-          {error && <div className="historical-error">Failed to load: {error}</div>}
-          {!loading && !error && trending?.tickers?.length === 0 && (
-            <div className="historical-empty">
-              <FiAlertTriangle className="historical-empty-icon" />
-              <p>No data collected on {selectedDate}.</p>
-              <p className="historical-empty-hint">This may be a collection gap — the scraper may not have been running.</p>
-            </div>
-          )}
-          {!loading && !error && trending?.tickers?.length > 0 && (
-            <>
-              <div className="historical-trending-title">
-                Trending Tickers — {trending.tickers.length} found
-              </div>
-              <div className="ticker-table-wrap">
-                <table className="ticker-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Ticker</th>
-                      <th>Mentions</th>
-                      <th>Subreddits</th>
-                      <th>Sparkline</th>
-                      <th>Trend</th>
-                      <th>Sentiment</th>
+        {loading && <div className="historical-loading">Loading trending tickers for {selectedDate}...</div>}
+        {error && <div className="historical-error">Failed to load: {error}</div>}
+        {!loading && !error && filteredTrending.length === 0 && (
+          <div className="historical-empty">
+            <FiAlertTriangle className="historical-empty-icon" />
+            <p>No data collected on {selectedDate}.</p>
+            <p className="historical-empty-hint">This may be a collection gap — the scraper may not have been running.</p>
+          </div>
+        )}
+        {!loading && !error && filteredTrending.length > 0 && (
+          <div className="ticker-table-wrap">
+            <table className="historical-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Ticker</th>
+                  <th>Mentions</th>
+                  <th>Subreddits</th>
+                  <th>Sparkline</th>
+                  <th>Trend</th>
+                  <th>Sentiment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTrending.map((t, i) => {
+                  const f = t.fundamentals
+                  return (
+                    <tr
+                      key={t.ticker}
+                      onClick={() => goToTicker(t.ticker, selectedDate)}
+                      className="clickable-row"
+                    >
+                      <td className="rank-cell">{i + 1}</td>
+                      <td className="ticker-cell">
+                        {t.ticker}
+                        {f?.name && <span className="table-ticker-name">{f.name}</span>}
+                        {f?.current_price != null && (
+                          <span className="hist-price">{formatPrice(f.current_price)}</span>
+                        )}
+                        {f?.market_cap != null && (
+                          <span className="hist-mcap">{formatLargeNum(f.market_cap)}</span>
+                        )}
+                      </td>
+                      <td className="num-col">{t.count.toLocaleString()}</td>
+                      <td className="hist-subs">
+                        {t.subreddits?.slice(0, 3).map((s) => (
+                          <span key={s} className="hist-sub-badge">{s}</span>
+                        ))}
+                        {t.subreddits?.length > 3 && (
+                          <span className="hist-sub-more">+{t.subreddits.length - 3}</span>
+                        )}
+                      </td>
+                      <td><SparklineChart data={t.sparkline} id={t.ticker} /></td>
+                      <td><TrendIcon trend={t.trend} /></td>
+                      <td><SentimentBadge sentiment={t.sentiment} /></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {trending.tickers.map((t, i) => {
-                      const f = t.fundamentals
-                      return (
-                        <tr
-                          key={t.ticker}
-                          onClick={() => goToTicker(t.ticker, selectedDate)}
-                          className="clickable-row"
-                        >
-                          <td className="rank-cell">{i + 1}</td>
-                          <td className="ticker-cell">
-                            {t.ticker}
-                            {f?.name && <span className="table-ticker-name">{f.name}</span>}
-                            {f?.current_price != null && (
-                              <span className="hist-price">{formatPrice(f.current_price)}</span>
-                            )}
-                            {f?.market_cap != null && (
-                              <span className="hist-mcap">{formatLargeNum(f.market_cap)}</span>
-                            )}
-                          </td>
-                          <td className="num-col">{t.count.toLocaleString()}</td>
-                          <td className="hist-subs">
-                            {t.subreddits?.slice(0, 3).map((s) => (
-                              <span key={s} className="hist-sub-badge">{s}</span>
-                            ))}
-                            {t.subreddits?.length > 3 && (
-                              <span className="hist-sub-more">+{t.subreddits.length - 3}</span>
-                            )}
-                          </td>
-                          <td><SparklineChart data={t.sparkline} id={t.ticker} /></td>
-                          <td><TrendIcon trend={t.trend} /></td>
-                          <td><SentimentBadge sentiment={t.sentiment} /></td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )

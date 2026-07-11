@@ -211,41 +211,6 @@
   text-transform: none;
 }
 
-/* ── Filter Dropdown ──────────────────────────────────────────── */
-
-.tickers-filter-dropdown {
-  min-width: 240px;
-}
-
-.tickers-filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.tickers-filter-label {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: rgb(var(--soft-text));
-}
-
-.tickers-filter-select,
-.tickers-filter-input {
-  background: rgb(var(--bg-color));
-  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 0.85rem;
-  color: rgb(var(--hard-text));
-  outline: none;
-}
-
-.tickers-filter-select:focus,
-.tickers-filter-input:focus {
-  border-color: rgb(var(--accent));
-}
-
 /* ── Directory Table ─────────────────────────────────────────── */
 
 .tickers-table-wrap {
