@@ -220,7 +220,7 @@ export default function Historical() {
   const [earliestDate, setEarliestDate] = useState(null)
   const [latestDate, setLatestDate] = useState(null)
   const [histogramBins, setHistogramBins] = useState(null)
-  const [histogramStart, setHistogramStart] = useState('')
+  const [histogramStart, setHistogramStart] = useState('2026-01-01')
   const [histogramGranularity, setHistogramGranularity] = useState('day')
 
   const [allTagSets, setAllTagSets] = useState([])
@@ -247,9 +247,6 @@ export default function Historical() {
       if (histogramStart) params.set('start', histogramStart)
       const res = await get(`/mentions/histogram?${params}`)
       setHistogramBins(res.bins)
-      if (!histogramStart && res.start) {
-        setHistogramStart(res.start)
-      }
     } catch {
       setHistogramBins([])
     }
