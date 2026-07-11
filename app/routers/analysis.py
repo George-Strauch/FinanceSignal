@@ -312,7 +312,7 @@ async def stream_analysis(
                 response=full_response,
                 post_count=len(posts),
             )
-            yield f'data: {json.dumps({"done": true, "analysis_id": analysis_id})}\n\n'
+            yield f'data: {json.dumps({"done": True, "analysis_id": analysis_id})}\n\n'
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

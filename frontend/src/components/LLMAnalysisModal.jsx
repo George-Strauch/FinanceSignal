@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FiX, FiArrowUp, FiMessageSquare, FiExternalLink, FiSend, FiLoader, FiCheck } from 'react-icons/fi'
+import ReactMarkdown from 'react-markdown'
 import { get, post } from '../api/client'
 import './LLMAnalysisModal.css'
 
@@ -197,154 +198,157 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
         </div>
 
         <div className="llm-modal-body">
-          {/* ── Config Section ─────────────────────────────────── */}
-          <div className="llm-config-section">
-            <div className="llm-config-row">
-              <div className="llm-config-group">
-                <label className="llm-config-label">Model</label>
-                <select
-                  className="llm-model-select"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
+          {/* ── Left: Config + Staging ────────────────────────── */}
+          <div className="llm-left-panel">
+            {/* Config Section */}
+            <div className="llm-config-section">
+              <div className="llm-config-row">
+                <div className="llm-config-group">
+                  <label className="llm-config-label">Model</label>
+                  <select
+                    className="llm-model-select"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="llm-config-group">
+                  <label className="llm-config-label">Date From</label>
+                  <input
+                    type="date"
+                    className="llm-date-input"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                  />
+                </div>
+                <div className="llm-config-group">
+                  <label className="llm-config-label">Date To</label>
+                  <input
+                    type="date"
+                    className="llm-date-input"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                  />
+                </div>
+                <button
+                  className="llm-stage-btn"
+                  onClick={stagePosts}
+                  disabled={!dateFrom || !dateTo || staging}
                 >
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
+                  {staging ? <FiLoader className="spin" /> : 'Stage Posts'}
+                </button>
               </div>
-              <div className="llm-config-group">
-                <label className="llm-config-label">Date From</label>
-                <input
-                  type="date"
-                  className="llm-date-input"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
+
+              <div className="llm-config-group llm-prompt-group">
+                <label className="llm-config-label">System Prompt</label>
+                <textarea
+                  className="llm-system-prompt"
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  rows={5}
                 />
               </div>
-              <div className="llm-config-group">
-                <label className="llm-config-label">Date To</label>
-                <input
-                  type="date"
-                  className="llm-date-input"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                />
-              </div>
-              <button
-                className="llm-stage-btn"
-                onClick={stagePosts}
-                disabled={!dateFrom || !dateTo || staging}
-              >
-                {staging ? <FiLoader className="spin" /> : 'Stage Posts'}
-              </button>
             </div>
 
-            <div className="llm-config-group llm-prompt-group">
-              <label className="llm-config-label">System Prompt</label>
-              <textarea
-                className="llm-system-prompt"
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                rows={6}
-              />
-            </div>
-          </div>
+            {stageError && (
+              <div className="llm-error">{stageError}</div>
+            )}
 
-          {stageError && (
-            <div className="llm-error">{stageError}</div>
-          )}
+            {/* Staged Posts Section */}
+            {staged && (
+              <div className="llm-staged-section">
+                <div className="llm-staged-header">
+                  <span className="llm-staged-title">
+                    Staged ({activePosts.length}/{staged.count})
+                  </span>
+                  <span className="llm-token-est">
+                    ~<strong>{activeTokenEst.toLocaleString()}</strong> tokens
+                  </span>
+                </div>
 
-          {/* ── Staged Posts Section ──────────────────────────── */}
-          {staged && (
-            <div className="llm-staged-section">
-              <div className="llm-staged-header">
-                <span className="llm-staged-title">
-                  Staged Posts ({activePosts.length}/{staged.count})
-                </span>
-                <span className="llm-token-est">
-                  Est. input tokens: <strong>{activeTokenEst.toLocaleString()}</strong>
-                </span>
-              </div>
-
-              <div className="llm-staged-list">
-                {staged.staged.map((s) => {
-                  const color = subColor(s.subreddit)
-                  const isExcluded = excludedIds.has(s.id)
-                  return (
-                    <div
-                      key={s.id}
-                      className={`llm-staged-item ${isExcluded ? 'excluded' : ''}`}
-                    >
-                      <label className="llm-staged-check">
-                        <input
-                          type="checkbox"
-                          checked={!isExcluded}
-                          onChange={() => toggleExclude(s.id)}
-                        />
-                      </label>
-                      <div className="llm-staged-content">
-                        <div className="llm-staged-title-row">
-                          <span className={`llm-staged-type ${s.type}`}>
-                            {s.type}
-                          </span>
-                          {s.title && <span className="llm-staged-post-title">{s.title}</span>}
-                        </div>
-                        <p className="llm-staged-preview">
-                          {s.body.slice(0, 200)}{s.body.length > 200 ? '...' : ''}
-                        </p>
-                        <div className="llm-staged-meta">
-                          <span
-                            className="llm-staged-sub"
-                            style={{ background: `rgba(${color}, 0.15)`, color: `rgb(${color})` }}
-                          >
-                            r/{s.subreddit}
-                          </span>
-                          <span className="llm-staged-author">u/{s.author}</span>
-                          <span className="llm-staged-stat">
-                            <FiArrowUp /> {s.score}
-                          </span>
-                          {s.num_comments != null && (
+                <div className="llm-staged-list">
+                  {staged.staged.map((s) => {
+                    const color = subColor(s.subreddit)
+                    const isExcluded = excludedIds.has(s.id)
+                    return (
+                      <div
+                        key={s.id}
+                        className={`llm-staged-item ${isExcluded ? 'excluded' : ''}`}
+                      >
+                        <label className="llm-staged-check">
+                          <input
+                            type="checkbox"
+                            checked={!isExcluded}
+                            onChange={() => toggleExclude(s.id)}
+                          />
+                        </label>
+                        <div className="llm-staged-content">
+                          <div className="llm-staged-title-row">
+                            <span className={`llm-staged-type ${s.type}`}>
+                              {s.type}
+                            </span>
+                            {s.title && <span className="llm-staged-post-title">{s.title}</span>}
+                          </div>
+                          <p className="llm-staged-preview">
+                            {s.body.slice(0, 200)}{s.body.length > 200 ? '...' : ''}
+                          </p>
+                          <div className="llm-staged-meta">
+                            <span
+                              className="llm-staged-sub"
+                              style={{ background: `rgba(${color}, 0.15)`, color: `rgb(${color})` }}
+                            >
+                              r/{s.subreddit}
+                            </span>
+                            <span className="llm-staged-author">u/{s.author}</span>
                             <span className="llm-staged-stat">
-                              <FiMessageSquare /> {s.num_comments}
+                              <FiArrowUp /> {s.score}
                             </span>
-                          )}
-                          <span className="llm-staged-time">
-                            {formatRelativeTime(s.created_utc)}
-                          </span>
-                          {s.is_truncated && (
-                            <span className="llm-staged-truncated">
-                              {s.word_count}/{s.orig_word_count} words
+                            {s.num_comments != null && (
+                              <span className="llm-staged-stat">
+                                <FiMessageSquare /> {s.num_comments}
+                              </span>
+                            )}
+                            <span className="llm-staged-time">
+                              {formatRelativeTime(s.created_utc)}
                             </span>
-                          )}
-                          <a
-                            href={s.reddit_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="llm-staged-ext"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <FiExternalLink />
-                          </a>
+                            {s.is_truncated && (
+                              <span className="llm-staged-truncated">
+                                {s.word_count}/{s.orig_word_count} words
+                              </span>
+                            )}
+                            <a
+                              href={s.reddit_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="llm-staged-ext"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <FiExternalLink />
+                            </a>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
+
+                <button
+                  className="llm-run-btn"
+                  onClick={runAnalysis}
+                  disabled={activePosts.length === 0 || streaming}
+                >
+                  {streaming ? <FiLoader className="spin" /> : <FiSend />}
+                  {streaming ? 'Streaming...' : `Run Analysis (${activePosts.length} posts)`}
+                </button>
               </div>
+            )}
+          </div>
 
-              <button
-                className="llm-run-btn"
-                onClick={runAnalysis}
-                disabled={activePosts.length === 0 || streaming}
-              >
-                {streaming ? <FiLoader className="spin" /> : <FiSend />}
-                {streaming ? 'Streaming...' : `Run Analysis (${activePosts.length} posts)`}
-              </button>
-            </div>
-          )}
-
-          {/* ── Stream Output Section ─────────────────────────── */}
-          {(streaming || streamContent || streamError) && (
+          {/* ── Right: Stream Output ───────────────────────────── */}
+          <div className="llm-right-panel">
             <div className="llm-stream-section">
               <div className="llm-stream-header">
                 <span className="llm-stream-title">Analysis Output</span>
@@ -358,16 +362,18 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
                 <div className="llm-error">{streamError}</div>
               )}
               {streamContent && (
-                <div
-                  className="llm-stream-output"
-                  ref={streamRef}
-                >
-                  {streamContent}
+                <div className="llm-stream-output" ref={streamRef}>
+                  <ReactMarkdown>{streamContent}</ReactMarkdown>
                   {streaming && <span className="llm-cursor" />}
                 </div>
               )}
+              {!streamContent && !streamError && (
+                <div className="llm-stream-placeholder">
+                  Stage posts and run analysis to see results here.
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

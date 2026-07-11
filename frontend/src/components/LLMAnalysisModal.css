@@ -14,8 +14,8 @@
   border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
   border-radius: 14px;
   width: 100%;
-  max-width: 900px;
-  max-height: 90vh;
+  max-width: 1400px;
+  height: 92vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
@@ -57,11 +57,33 @@
 
 .llm-modal-body {
   padding: 16px 22px 22px;
-  overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  overflow: hidden;
+}
+
+/* ── Left Panel: Config + Staging ─────────────────────────────── */
+
+.llm-left-panel {
+  width: 520px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ── Right Panel: Stream Output ──────────────────────────────── */
+
+.llm-right-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* ── Config Section ────────────────────────────────────────────── */
@@ -355,10 +377,14 @@
 /* ── Stream Output ─────────────────────────────────────────────── */
 
 .llm-stream-section {
+  flex: 1;
   border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
   border-radius: 10px;
   padding: 14px 16px;
   background: rgb(var(--secondary-color));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .llm-stream-header {
@@ -366,6 +392,7 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .llm-stream-title {
@@ -385,12 +412,78 @@
 }
 
 .llm-stream-output {
-  font-size: 0.85rem;
-  line-height: 1.6;
+  font-size: 0.88rem;
+  line-height: 1.7;
   color: rgb(var(--hard-text));
-  white-space: pre-wrap;
-  max-height: 400px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.llm-stream-output h1,
+.llm-stream-output h2,
+.llm-stream-output h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 12px 0 6px;
+}
+
+.llm-stream-output h2 {
+  font-size: 1.05rem;
+}
+
+.llm-stream-output p {
+  margin: 0 0 10px;
+}
+
+.llm-stream-output ul,
+.llm-stream-output ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.llm-stream-output li {
+  margin-bottom: 4px;
+}
+
+.llm-stream-output strong {
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+}
+
+.llm-stream-output em {
+  font-style: italic;
+}
+
+.llm-stream-output blockquote {
+  border-left: 3px solid rgba(var(--accent), 0.4);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: rgb(var(--soft-text));
+}
+
+.llm-stream-output code {
+  background: rgba(var(--soft-border), 0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.82rem;
+}
+
+.llm-stream-output hr {
+  border: none;
+  border-top: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  margin: 12px 0;
+}
+
+.llm-stream-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: rgb(var(--soft-text));
+  font-size: 0.88rem;
+  opacity: 0.5;
 }
 
 .llm-cursor {
@@ -427,4 +520,25 @@
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .llm-modal {
+    height: 92vh;
+  }
+
+  .llm-modal-body {
+    flex-direction: column;
+  }
+
+  .llm-left-panel {
+    width: 100%;
+    flex-shrink: 1;
+  }
+
+  .llm-right-panel {
+    flex: 1;
+  }
 }

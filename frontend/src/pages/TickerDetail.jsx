@@ -5,6 +5,7 @@ import {
   ComposedChart, Line, Bar,
 } from 'recharts'
 import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser, FiBriefcase, FiCpu } from 'react-icons/fi'
+import ReactMarkdown from 'react-markdown'
 import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
@@ -85,7 +86,9 @@ function PastAnalysis({ id }) {
         <span>Model: {analysis.model}</span>
         <span>Tokens: {analysis.input_tokens || '?'}</span>
       </div>
-      <div className="td-llm-analysis-response">{analysis.response}</div>
+      <div className="td-llm-analysis-response">
+        <ReactMarkdown>{analysis.response}</ReactMarkdown>
+      </div>
     </div>
   )
 }
