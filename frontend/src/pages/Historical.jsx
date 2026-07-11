@@ -225,6 +225,7 @@ export default function Historical() {
 
   const [allTagSets, setAllTagSets] = useState([])
   const [hiddenTags, setHiddenTags] = useState([])
+  const [tagsInitialized, setTagsInitialized] = useState(false)
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -279,8 +280,17 @@ export default function Historical() {
   }, [selectedDate, fetchTrending])
 
   useEffect(() => {
-    get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
-  }, [])
+    get('/ticker-tags').then((res) => {
+      setAllTagSets(res.tag_sets)
+      if (!tagsInitialized) {
+        const defaultHidden = res.tag_sets
+          .filter((ts) => ['ambiguous', 'crypto', 'etf'].includes(ts.id))
+          .map((ts) => ts.id)
+        setHiddenTags(defaultHidden)
+        setTagsInitialized(true)
+      }
+    }).catch(() => {})
+  }, [tagsInitialized])
 
   const handleSelectDate = (date) => {
     setSelectedDate(date)
