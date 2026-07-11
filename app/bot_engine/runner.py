@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from sentinel.db import RedditDatabase
 from app.bot_engine.base_bot import BaseTradingBot, Decision
-from app.bot_engine.data_builder import build_data_point
+from app.bot_engine.context import BotContext
 from app.bot_engine.discovery import discover_bots
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,9 @@ async def run_bot_evaluator(state: BotRunnerState):
             state.current_bot = bot_id
             strategy_id = strategy["id"]
 
+            # Create context for this bot
+            bot._ctx = BotContext(db, strategy_id, now=eval_time)
+
             # Filter tickers for this bot
             tickers = ticker_list
             if bot.ticker_filter:
@@ -148,30 +151,21 @@ async def run_bot_evaluator(state: BotRunnerState):
 
                 state.current_ticker = ticker
                 try:
-                    # Build data point
-                    dp = build_data_point(
-                        db, ticker, eval_time,
-                        strategy_id=strategy_id,
-                        use_live_price=True,
-                    )
-
-                    # Apply bot filters
-                    if dp.mentions_24h < bot.min_mentions_24h:
-                        continue
-                    if bot.min_market_cap and dp.market_cap and dp.market_cap < bot.min_market_cap:
-                        continue
-
-                    # Evaluate
-                    decision = bot.evaluate(dp)
+                    decision = bot.evaluate(ticker)
                     state.tickers_evaluated += 1
 
-                    # Execute if price available
-                    if dp.current_price is not None:
+                    price = bot.price(ticker)
+                    if price is not None:
+                        # Read position from DB directly for authoritative state
+                        open_trade = db.get_open_trade_for_ticker_strategy(strategy_id, ticker)
+                        current_pos = open_trade["direction"] if open_trade else "out"
+                        trade_id = open_trade["id"] if open_trade else None
+
                         opened, closed = _execute_decision(
                             db, strategy_id, ticker,
-                            dp.current_position, decision,
-                            dp.current_price, eval_time,
-                            dp.trade_id,
+                            current_pos, decision,
+                            price, eval_time,
+                            trade_id,
                         )
                         state.trades_opened += opened
                         state.trades_closed += closed

@@ -4,10 +4,12 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Line, Bar,
 } from 'recharts'
-import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser } from 'react-icons/fi'
+import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser, FiBriefcase } from 'react-icons/fi'
 import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
+import TradeEntryModal from '../components/TradeEntryModal'
+import PositionsTable from '../components/PositionsTable'
 import { recordTickerVisit } from './Tickers'
 import './TickerDetail.css'
 
@@ -166,6 +168,11 @@ export default function TickerDetail() {
   const [tagMenuOpen, setTagMenuOpen] = useState(false)
   const tagMenuRef = useRef(null)
 
+  // Trade state
+  const [tradeModalOpen, setTradeModalOpen] = useState(false)
+  const [tickerTrades, setTickerTrades] = useState([])
+  const [tradesLoading, setTradesLoading] = useState(true)
+
   // Record visit for recent tickers
   useEffect(() => {
     if (ticker) recordTickerVisit(ticker)
@@ -272,6 +279,20 @@ export default function TickerDetail() {
     }
   }, [ticker, window])
 
+  // Fetch open trades for this ticker
+  const fetchTickerTrades = useCallback(async () => {
+    setTradesLoading(true)
+    try {
+      const res = await get(`/trading/ticker/${ticker}/trades`)
+      setTickerTrades(res.trades || [])
+    } catch {
+      setTickerTrades([])
+    } finally {
+      setTradesLoading(false)
+    }
+  }, [ticker])
+
+  useEffect(() => { fetchTickerTrades() }, [fetchTickerTrades])
   useEffect(() => { fetchDetail() }, [fetchDetail])
   useEffect(() => {
     if (bottomTab === 'authors') fetchAuthors()
@@ -391,6 +412,13 @@ export default function TickerDetail() {
             >
               <FiExternalLink /> Yahoo Finance
             </a>
+            <button
+              className="td-trade-btn"
+              onClick={() => setTradeModalOpen(true)}
+              title="Open a paper trade"
+            >
+              <FiBriefcase /> Trade
+            </button>
           </div>
           {data && (
             <span className="td-mention-count">
@@ -481,6 +509,19 @@ export default function TickerDetail() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Open Positions for this ticker */}
+      {tickerTrades.length > 0 && (
+        <div className="td-positions-section">
+          <h2>Open Positions</h2>
+          <PositionsTable
+            trades={tickerTrades}
+            showStrategy={true}
+            compact={true}
+            onTradeUpdated={fetchTickerTrades}
+          />
         </div>
       )}
 
@@ -858,6 +899,14 @@ export default function TickerDetail() {
           )}
         </div>
       )}
+
+      <TradeEntryModal
+        isOpen={tradeModalOpen}
+        onClose={() => setTradeModalOpen(false)}
+        onTradeOpened={fetchTickerTrades}
+        prefillTicker={ticker?.toUpperCase()}
+        prefillPrice={marketInfo?.current_price ? String(marketInfo.current_price) : ''}
+      />
     </div>
   )
 }

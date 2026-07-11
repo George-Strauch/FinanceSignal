@@ -397,6 +397,18 @@ export default function TrendingDashboard() {
       {!showSkeleton && !isEmpty && viewMode === 'table' && (
         <div className="ticker-table-wrap">
           <table className="ticker-table">
+            <colgroup>
+              <col style={{ width: '36px' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '7%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '110px' }} />
+              <col style={{ width: '50px' }} />
+              <col style={{ width: '90px' }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>#</th>

@@ -94,6 +94,10 @@ if FRONTEND_DIR.is_dir():
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """Serve matching static file or fall back to index.html for SPA routing."""
+        # Never intercept API paths
+        if full_path.startswith("api/") or full_path == "api":
+            from starlette.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         file = FRONTEND_DIR / full_path
         if full_path and file.is_file():
             return FileResponse(file)

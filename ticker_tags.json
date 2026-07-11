@@ -61,7 +61,12 @@
                 "NAV",
                 "LIVE",
                 "GAAP",
-                "ROI"
+                "ROI",
+                "FX",
+                "GTA",
+                "IRGC",
+                "NATO",
+                "COVID"
             ]
         },
         {

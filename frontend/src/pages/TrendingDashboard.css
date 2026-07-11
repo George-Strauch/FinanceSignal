@@ -308,6 +308,7 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.88rem;
+  table-layout: fixed;
 }
 
 .ticker-table thead th {
@@ -468,7 +469,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 160px;
+}
+
+.table-tags {
+  overflow: hidden;
+}
+
+.ticker-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Error ─────────────────────────────────────────────────── */

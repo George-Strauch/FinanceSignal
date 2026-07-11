@@ -1,7 +1,6 @@
 """Momentum Surge Bot — long-only momentum strategy based on mention acceleration."""
 
 from app.bot_engine.base_bot import BaseTradingBot, Decision
-from app.bot_engine.data_point import TickerDataPoint
 
 
 class MomentumSurgeBot(BaseTradingBot):
@@ -15,7 +14,8 @@ class MomentumSurgeBot(BaseTradingBot):
         return (
             "Long-only momentum bot. Enters when mention acceleration exceeds 3x "
             "average with bullish sentiment and price above $5. Exits when acceleration "
-            "drops below 1.5x or sentiment turns bearish. Stop loss at -5%."
+            "drops below 1.5x or sentiment turns bearish. Stop loss at -5%. "
+            "Avoids entries when SPY is trending down."
         )
 
     @property
@@ -23,49 +23,50 @@ class MomentumSurgeBot(BaseTradingBot):
         return "#34d399"
 
     @property
-    def min_market_cap(self) -> int | None:
-        return 500_000_000  # $500M
+    def market_tickers(self) -> list[str]:
+        return ["SPY"]
 
-    @property
-    def min_mentions_24h(self) -> int:
-        return 5
+    def evaluate(self, ticker: str) -> Decision:
+        price = self.price(ticker)
+        if not price or price < 5.0:
+            return Decision(Decision.OUT, f"price too low ({price})")
 
-    def evaluate(self, data: TickerDataPoint) -> Decision:
-        # No price data = can't trade
-        if data.current_price is None:
-            return Decision(Decision.OUT, "no price data")
+        # Market context — check SPY trend
+        spy_bars = self.ohlcv("SPY", days=2)
+        if len(spy_bars) >= 24:
+            spy_pct = (spy_bars[-1].close - spy_bars[-24].close) / spy_bars[-24].close * 100
+            if spy_pct < -0.5:
+                return Decision(Decision.OUT, "SPY trending down")
 
-        # ── Exit conditions (checked first when in position) ──────
-        if data.current_position == "long":
-            # Stop loss
-            if data.unrealized_pnl_pct is not None and data.unrealized_pnl_pct <= -5.0:
-                return Decision(Decision.OUT, f"stop loss triggered ({data.unrealized_pnl_pct:.1f}%)")
+        # Bot-specific filtering (replaces engine-side min_mentions_24h, min_market_cap)
+        if self.mentions(ticker, hours=24) < 5:
+            return Decision(Decision.OUT, "low mentions")
+        fund = self.fundamentals(ticker)
+        if fund and fund.get("market_cap") and fund["market_cap"] < 500_000_000:
+            return Decision(Decision.OUT, "market cap too low")
 
-            # Bearish sentiment exit
-            if data.sentiment_label == "bearish" and data.sentiment_confidence in ("medium", "high"):
-                return Decision(Decision.OUT, f"bearish sentiment ({data.sentiment_score})")
+        # Position management
+        pos = self.position(ticker)
+        if pos.direction == "long":
+            if pos.unrealized_pnl_pct is not None and pos.unrealized_pnl_pct <= -5.0:
+                return Decision(Decision.OUT, f"stop loss ({pos.unrealized_pnl_pct:.1f}%)")
+            sent = self.sentiment(ticker)
+            if sent.label == "bearish" and sent.confidence in ("medium", "high"):
+                return Decision(Decision.OUT, f"bearish sentiment ({sent.score})")
+            accel = self.mention_velocity(ticker)
+            if accel is not None and accel < 1.5:
+                return Decision(Decision.OUT, f"acceleration dropped ({accel:.1f}x)")
+            return Decision(Decision.LONG, "holding")
 
-            # Acceleration cooldown
-            if data.mention_accel_1h is not None and data.mention_accel_1h < 1.5:
-                return Decision(Decision.OUT, f"acceleration dropped ({data.mention_accel_1h:.1f}x)")
-
-            # Stay in position
-            return Decision(Decision.LONG, "holding position")
-
-        # ── Entry conditions ──────────────────────────────────────
-        if data.current_price < 5.0:
-            return Decision(Decision.OUT, f"price too low (${data.current_price:.2f})")
-
-        # Need mention acceleration above 3x
-        if data.mention_accel_1h is None or data.mention_accel_1h < 3.0:
-            return Decision(Decision.OUT, f"low acceleration ({data.mention_accel_1h})")
-
-        # Need bullish sentiment
-        if data.sentiment_label != "bullish":
-            return Decision(Decision.OUT, f"sentiment not bullish ({data.sentiment_label})")
+        # Entry conditions
+        accel = self.mention_velocity(ticker)
+        if accel is None or accel < 3.0:
+            return Decision(Decision.OUT, f"low acceleration ({accel})")
+        sent = self.sentiment(ticker)
+        if sent.label != "bullish":
+            return Decision(Decision.OUT, f"sentiment not bullish ({sent.label})")
 
         return Decision(
             Decision.LONG,
-            f"surge detected: {data.mention_accel_1h:.1f}x accel, "
-            f"{data.mentions_1h} mentions/1h, sentiment={data.sentiment_score}"
+            f"surge: {accel:.1f}x accel"
         )

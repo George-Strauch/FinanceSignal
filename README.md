@@ -65,8 +65,8 @@ The app will be available at `http://localhost:5173`.
 │   ├── routers/           # API route modules
 │   ├── bot_engine/        # Trading bot engine
 │   │   ├── base_bot.py    # BaseTradingBot ABC
-│   │   ├── data_point.py  # TickerDataPoint dataclass
-│   │   ├── data_builder.py# Data assembly for bots
+│   │   ├── context.py     # BotContext: time-aware data layer
+│   │   ├── data_point.py  # OHLCVBar, PositionInfo dataclasses
 │   │   ├── discovery.py   # Bot filesystem discovery
 │   │   ├── runner.py      # Hourly bot evaluator
 │   │   └── backtester.py  # Historical backtest engine
@@ -106,7 +106,6 @@ The bot framework lets you create automated trading strategies that evaluate tic
 
 ```python
 from app.bot_engine.base_bot import BaseTradingBot, Decision
-from app.bot_engine.data_point import TickerDataPoint
 
 class MyBot(BaseTradingBot):
     @property
@@ -117,16 +116,18 @@ class MyBot(BaseTradingBot):
     def description(self) -> str:
         return "Goes long when Reddit is bullish."
 
-    def evaluate(self, data: TickerDataPoint) -> Decision:
-        if data.current_price is None:
+    def evaluate(self, ticker: str) -> Decision:
+        price = self.price(ticker)
+        if not price:
             return Decision(Decision.OUT, "no price")
 
-        if data.current_position == "long":
-            if data.unrealized_pnl_pct and data.unrealized_pnl_pct <= -5.0:
+        pos = self.position(ticker)
+        if pos.direction == "long":
+            if pos.unrealized_pnl_pct and pos.unrealized_pnl_pct <= -5.0:
                 return Decision(Decision.OUT, "stop loss")
             return Decision(Decision.LONG, "holding")
 
-        if data.sentiment_label == "bullish" and data.mentions_1h >= 5:
+        if self.sentiment(ticker).label == "bullish" and self.mentions(ticker, hours=1) >= 5:
             return Decision(Decision.LONG, "bullish surge")
 
         return Decision(Decision.OUT, "no signal")
@@ -134,11 +135,11 @@ class MyBot(BaseTradingBot):
 
 ### Available Data
 
-Each `evaluate()` call receives a `TickerDataPoint` with:
-- **Price**: current price, OHLCV, rolling % changes (1h/6h/24h/7d)
-- **Mentions**: counts and unique authors at 1h/6h/24h/7d windows, mention acceleration
-- **Sentiment**: score (-1 to 1), label (bullish/bearish/neutral), confidence
-- **Fundamentals**: market cap, P/E, beta, short %, 52-week range, moving averages
-- **Position**: current state (long/short/out), entry price, unrealized P&L
+Bots pull data on-demand via `self.*` methods, backed by a time-aware context:
+- **Price**: `self.price()`, `self.ohlcv()` + built-in indicators (`self.sma()`, `self.ema()`, `self.rsi()`, `self.atr()`, `self.vwap()`)
+- **Mentions**: `self.mentions()`, `self.unique_authors()`, `self.mention_velocity()`
+- **Sentiment**: `self.sentiment()` — score, label, confidence
+- **Fundamentals**: `self.fundamentals()` — market cap, P/E, beta, short %, etc.
+- **Position**: `self.position()`, `self.portfolio()` — direction, entry price, unrealized P&L
 
 See [docs/trading-bots.md](docs/trading-bots.md) for the complete data reference and API documentation.

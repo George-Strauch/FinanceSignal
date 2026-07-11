@@ -9,8 +9,7 @@ import yfinance as yf
 
 from sentinel.db import RedditDatabase
 from app.bot_engine.discovery import discover_bots
-from app.bot_engine.data_builder import build_data_point
-from app.bot_engine.base_bot import Decision
+from app.bot_engine.context import BotContext
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,8 @@ async def run_backtest(bot_id: str, run_id: int, start_date: str, end_date: str,
     1. Clear existing trades for bot's strategy
     2. Determine time range
     3. Get ticker universe from mentions in range
-    4. Fetch & cache prices
-    5. Hour-by-hour: build data points, evaluate, record trades
+    4. Fetch & cache prices (universe + bot's market_tickers)
+    5. Hour-by-hour: evaluate via BotContext, record trades
     6. Force-close open positions, compute stats
     """
     bots = discover_bots()
@@ -110,16 +109,20 @@ async def run_backtest(bot_id: str, run_id: int, start_date: str, end_date: str,
         total_hours = int((end_ts - start_ts) / 3600)
         db.update_backtest_run(run_id, total_hours=total_hours, tickers_evaluated=len(tickers))
 
-        # Fetch and cache prices for all tickers
-        logger.info("Fetching prices for %d tickers...", len(tickers))
-        for ticker in tickers:
+        # Pre-fetch prices: universe + bot's market_tickers
+        all_tickers = list(set(tickers) | set(bot.market_tickers))
+        logger.info("Fetching prices for %d tickers...", len(all_tickers))
+        for ticker_sym in all_tickers:
             if stop_event.is_set():
                 db.update_backtest_run(run_id, status="failed", error="Cancelled")
                 return
-            await asyncio.to_thread(_fetch_and_cache_prices, db, ticker, start_ts, end_ts)
+            await asyncio.to_thread(_fetch_and_cache_prices, db, ticker_sym, start_ts, end_ts)
             await asyncio.sleep(PRICE_FETCH_DELAY)
 
-        # Hour-by-hour evaluation
+        # Create context and advance through time
+        ctx = BotContext(db, strategy_id, now=start_ts)
+        bot._ctx = ctx
+
         trades_generated = 0
         hours_evaluated = 0
         current_ts = start_ts
@@ -129,31 +132,26 @@ async def run_backtest(bot_id: str, run_id: int, start_date: str, end_date: str,
                 db.update_backtest_run(run_id, status="failed", error="Cancelled")
                 return
 
+            ctx._advance(current_ts)
+
             for ticker in tickers:
                 try:
-                    dp = build_data_point(
-                        db, ticker, current_ts,
-                        strategy_id=strategy_id,
-                        use_live_price=False,
-                    )
+                    decision = bot.evaluate(ticker)
+                    price = bot.price(ticker)
 
-                    # Skip if no price data
-                    if dp.current_price is None:
+                    if price is None:
                         continue
 
-                    # Apply bot filters
-                    if dp.mentions_24h < bot.min_mentions_24h:
-                        continue
-                    if bot.min_market_cap and dp.market_cap and dp.market_cap < bot.min_market_cap:
-                        continue
+                    # Read position from DB directly for authoritative state
+                    open_trade = db.get_open_trade_for_ticker_strategy(strategy_id, ticker)
+                    current_pos = open_trade["direction"] if open_trade else "out"
+                    trade_id = open_trade["id"] if open_trade else None
 
-                    decision = bot.evaluate(dp)
-
-                    if dp.current_position != decision.action and dp.current_price is not None:
+                    if current_pos != decision.action:
                         # Close existing position
-                        if dp.current_position != "out" and dp.trade_id is not None:
+                        if current_pos != "out" and trade_id is not None:
                             db.close_trade(
-                                dp.trade_id, exit_price=dp.current_price,
+                                trade_id, exit_price=price,
                                 exit_note=decision.reason, exit_at=current_ts,
                             )
                             trades_generated += 1
@@ -164,7 +162,7 @@ async def run_backtest(bot_id: str, run_id: int, start_date: str, end_date: str,
                                 strategy_id=strategy_id,
                                 ticker=ticker,
                                 direction=decision.action,
-                                entry_price=dp.current_price,
+                                entry_price=price,
                                 entry_at=current_ts,
                                 entry_note=decision.reason,
                             )

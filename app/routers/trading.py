@@ -53,10 +53,16 @@ def _get_current_price(ticker: str, db: RedditDatabase) -> float | None:
     return None
 
 
-def _enrich_trade(trade: dict, db: RedditDatabase) -> dict:
+def _enrich_trade(trade: dict, db: RedditDatabase, price_cache: dict | None = None) -> dict:
     """Add unrealized P&L for open trades."""
     if trade["status"] == "open":
-        current_price = _get_current_price(trade["ticker"], db)
+        ticker = trade["ticker"]
+        if price_cache is not None and ticker in price_cache:
+            current_price = price_cache[ticker]
+        else:
+            current_price = _get_current_price(ticker, db)
+            if price_cache is not None:
+                price_cache[ticker] = current_price
         if current_price is not None:
             direction_mult = 1.0 if trade["direction"] == "long" else -1.0
             trade["current_price"] = current_price
@@ -71,7 +77,8 @@ def _enrich_trade(trade: dict, db: RedditDatabase) -> dict:
 
 
 def _enrich_trades(trades: list[dict], db: RedditDatabase) -> list[dict]:
-    return [_enrich_trade(t, db) for t in trades]
+    price_cache: dict = {}
+    return [_enrich_trade(t, db, price_cache) for t in trades]
 
 
 # ── Strategy Endpoints ──────────────────────────────────────────
@@ -226,14 +233,18 @@ def portfolio_summary(db: RedditDatabase = Depends(get_db)):
         stats = db.get_strategy_stats(s["id"])
         strategy_summaries.append({**s, "stats": stats})
 
-    # Overall stats
-    all_closed = db.list_trades(status="closed", limit=10000)
-    total_closed = len(all_closed)
+    # Overall stats — lightweight aggregate query instead of fetching all rows
     total_open = len(open_trades)
-    wins = sum(1 for t in all_closed if t["realized_pnl_pct"] and t["realized_pnl_pct"] > 0)
+    row = db.conn.execute(
+        """SELECT COUNT(*) as total,
+                  SUM(CASE WHEN realized_pnl_pct > 0 THEN 1 ELSE 0 END) as wins,
+                  AVG(realized_pnl_pct) as avg_return
+           FROM trades WHERE status = 'closed'"""
+    ).fetchone()
+    total_closed = row["total"] or 0
+    wins = row["wins"] or 0
     overall_win_rate = round(wins / total_closed, 4) if total_closed > 0 else None
-    pnls = [t["realized_pnl_pct"] for t in all_closed if t["realized_pnl_pct"] is not None]
-    avg_return = round(sum(pnls) / len(pnls), 4) if pnls else None
+    avg_return = round(row["avg_return"], 4) if row["avg_return"] is not None else None
 
     return {
         "open_positions": open_trades,

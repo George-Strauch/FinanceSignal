@@ -30,9 +30,8 @@ def _get_bot_summary(bot_id: str, bot, strategy: dict | None, db: RedditDatabase
         "name": bot.name,
         "description": bot.description,
         "color": bot.color,
-        "min_market_cap": bot.min_market_cap,
-        "min_mentions_24h": bot.min_mentions_24h,
         "ticker_filter": bot.ticker_filter,
+        "market_tickers": bot.market_tickers,
     }
     if strategy:
         stats = db.get_strategy_stats(strategy["id"])
@@ -48,7 +47,7 @@ def _get_bot_summary(bot_id: str, bot, strategy: dict | None, db: RedditDatabase
     return result
 
 
-@router.get("/")
+@router.get("")
 def list_bots(db: RedditDatabase = Depends(get_db)):
     """List all discovered bots with strategy info and stats."""
     bots = discover_bots()

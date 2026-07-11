@@ -23,6 +23,7 @@ RUN python -m spacy download en_core_web_lg
 # Copy application source
 COPY src/ src/
 COPY app/ app/
+COPY bots/ bots/
 COPY pyproject.toml .
 
 # Install sentinel package in editable mode

@@ -77,6 +77,47 @@
   border-color: rgba(var(--accent), 0.6);
 }
 
+/* ── Trade Button ────────────────────────────────────────────── */
+
+.td-trade-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: rgb(52, 211, 153);
+  padding: 3px 10px;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.td-trade-btn:hover {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.6);
+}
+
+/* ── Open Positions Section ─────────────────────────────────── */
+
+.td-positions-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.td-positions-section h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 12px;
+}
+
 /* ── Tag Quick-Add ───────────────────────────────────────────── */
 
 .td-tag-add-wrap {
