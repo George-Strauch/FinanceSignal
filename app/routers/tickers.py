@@ -644,6 +644,7 @@ def historical_trending(
     date: str = Query(..., description="Date in YYYY-MM-DD format"),
     limit: int = Query(50, ge=1, le=100),
     count_mode: CountMode = CountMode.mentions,
+    forward_days: int = Query(7, ge=0, le=365, description="Days forward to include in price sparkline"),
     db: RedditDatabase = Depends(get_db),
 ):
     _ensure_indexes(db)
@@ -813,6 +814,24 @@ def historical_trending(
                 "sector": fr.get("sector"),
             }
 
+    # ── Price sparkline: selected day + N days forward ──────────
+    price_sparkline_map: dict[str, list[dict]] = {}
+    if tickers_in_result and forward_days > 0:
+        from datetime import timedelta
+        forward_end_ts = dt_cls.combine(
+            sel_date + timedelta(days=forward_days),
+            dt_time.max,
+            tzinfo=ET,
+        ).timestamp()
+        for tk in tickers_in_result:
+            price_rows = db.get_price_range(tk, start_ts, forward_end_ts)
+            if price_rows:
+                price_sparkline_map[tk] = [
+                    {"t": datetime.fromtimestamp(r["timestamp"], tz=ET).isoformat(), "p": r.get("close")}
+                    for r in price_rows
+                    if r.get("close") is not None
+                ]
+
     def _compute_trend(points: list[dict]) -> str:
         if len(points) < 2:
             return "flat"
@@ -847,6 +866,7 @@ def historical_trending(
                 "sentiment": sentiment_map.get(r["ticker"], {"score": 0, "label": "neutral", "signal_count": 0, "sources": {}, "confidence": "low"}),
                 "tags": tag_map.get(r["ticker"], []),
                 "fundamentals": fundamentals_map.get(r["ticker"]),
+                "price_sparkline": price_sparkline_map.get(r["ticker"], []),
             }
             for r in rows
         ],

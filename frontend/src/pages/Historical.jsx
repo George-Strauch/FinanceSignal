@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  AreaChart, Area,
+  AreaChart, Area, LineChart, Line,
 } from 'recharts'
-import { FiChevronLeft, FiChevronRight, FiTrendingUp, FiTrendingDown, FiMinus, FiArrowRight, FiAlertTriangle } from 'react-icons/fi'
+import { FiChevronLeft, FiChevronRight, FiAlertTriangle } from 'react-icons/fi'
 import { get } from '../api/client'
 import TagFilterButton from '../components/TagFilterButton'
 import './Historical.css'
@@ -33,8 +33,8 @@ function dateStr(d) {
   return `${y}-${m}-${day}`
 }
 
-function SparklineChart({ data, id }) {
-  if (!data || data.length === 0) return null
+function MentionSparkline({ data, id }) {
+  if (!data || data.length === 0) return <span className="hist-no-data">-</span>
   const gradientId = `hist-spark-${id}`
   return (
     <ResponsiveContainer width={100} height={32}>
@@ -51,22 +51,15 @@ function SparklineChart({ data, id }) {
   )
 }
 
-function TrendIcon({ trend }) {
-  if (trend === 'up') return <FiTrendingUp className="trend-indicator up" />
-  if (trend === 'down') return <FiTrendingDown className="trend-indicator down" />
-  return <FiMinus className="trend-indicator flat" />
-}
-
-function SentimentBadge({ sentiment }) {
-  if (!sentiment) return null
-  const { label } = sentiment
-  const icon = label === 'bullish' ? <FiTrendingUp /> : label === 'bearish' ? <FiTrendingDown /> : <FiArrowRight />
-  return <span className={`sentiment-badge sentiment-${label}`}>{icon} {label}</span>
-}
-
-function formatPrice(v) {
-  if (v == null) return '-'
-  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+function PriceSparkline({ data }) {
+  if (!data || data.length === 0) return <span className="hist-no-data">-</span>
+  return (
+    <ResponsiveContainer width={100} height={32}>
+      <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <Line type="monotone" dataKey="p" stroke="rgb(99, 102, 241)" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
 }
 
 function formatLargeNum(n) {
@@ -227,6 +220,8 @@ export default function Historical() {
   const [hiddenTags, setHiddenTags] = useState([])
   const [tagsInitialized, setTagsInitialized] = useState(false)
 
+  const [forwardDays, setForwardDays] = useState(7)
+
   const fetchHealth = useCallback(async () => {
     try {
       const res = await get('/system/collection-health?days=90')
@@ -257,7 +252,7 @@ export default function Historical() {
     setLoading(true)
     setError(null)
     try {
-      const res = await get(`/tickers/historical?date=${date}&limit=50`)
+      const res = await get(`/tickers/historical?date=${date}&limit=50&forward_days=${forwardDays}`)
       setTrending(res)
     } catch (err) {
       setError(err.message)
@@ -265,7 +260,7 @@ export default function Historical() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [forwardDays])
 
   useEffect(() => {
     fetchHealth()
@@ -316,6 +311,26 @@ export default function Historical() {
         return !t.tags?.some((tag) => hiddenTags.includes(tag.id))
       })
     : []
+
+  // Sparkline bounds text
+  const mentionBounds = (() => {
+    if (!filteredTrending || filteredTrending.length === 0) return null
+    const allPoints = filteredTrending.flatMap((t) => t.sparkline || [])
+    if (allPoints.length === 0) return null
+    const times = allPoints.map((p) => p.t).sort()
+    return { start: times[0], end: times[times.length - 1] }
+  })()
+
+  const priceBounds = (() => {
+    if (!filteredTrending || filteredTrending.length === 0) return null
+    const allPoints = filteredTrending.flatMap((t) => t.price_sparkline || [])
+    if (allPoints.length === 0) return null
+    const times = allPoints.map((p) => p.t).sort()
+    return { start: times[0], end: times[times.length - 1] }
+  })()
+
+  const hasPriceData = filteredTrending.some((t) => t.price_sparkline && t.price_sparkline.length > 0)
+  const hasMarketCap = filteredTrending.some((t) => t.fundamentals?.market_cap != null)
 
   return (
     <div className="historical-page">
@@ -373,6 +388,40 @@ export default function Historical() {
       </div>
 
       <div className="historical-bottom-section">
+        <div className="historical-config-panel">
+          <div className="historical-config-row">
+            <div className="historical-config-group">
+              <label className="histogram-control-label">Days Forward Price Look</label>
+              <input
+                type="number"
+                className="histogram-date-input"
+                value={forwardDays}
+                min={0}
+                max={365}
+                onChange={(e) => setForwardDays(Math.max(0, Math.min(365, Number(e.target.value) || 0)))}
+              />
+            </div>
+            <div className="historical-config-info">
+              {mentionBounds && (
+                <div className="hist-bounds-text">
+                  <span className="hist-bounds-label">Mention sparkline:</span>
+                  <span className="hist-bounds-value">{mentionBounds.start}</span>
+                  <span className="hist-bounds-sep">→</span>
+                  <span className="hist-bounds-value">{mentionBounds.end}</span>
+                </div>
+              )}
+              {priceBounds && (
+                <div className="hist-bounds-text">
+                  <span className="hist-bounds-label">Price sparkline:</span>
+                  <span className="hist-bounds-value">{priceBounds.start}</span>
+                  <span className="hist-bounds-sep">→</span>
+                  <span className="hist-bounds-value">{priceBounds.end}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="historical-table-header">
           <div className="historical-trending-title">
             Trending Tickers — {selectedDate}
@@ -404,9 +453,9 @@ export default function Historical() {
                   <th>Ticker</th>
                   <th>Mentions</th>
                   <th>Subreddits</th>
-                  <th>Sparkline</th>
-                  <th>Trend</th>
-                  <th>Sentiment</th>
+                  <th>Mentions Sparkline</th>
+                  {hasMarketCap && <th>Mkt Cap</th>}
+                  {hasPriceData && <th>Price ({forwardDays}d fwd)</th>}
                 </tr>
               </thead>
               <tbody>
@@ -422,12 +471,6 @@ export default function Historical() {
                       <td className="ticker-cell">
                         {t.ticker}
                         {f?.name && <span className="table-ticker-name">{f.name}</span>}
-                        {f?.current_price != null && (
-                          <span className="hist-price">{formatPrice(f.current_price)}</span>
-                        )}
-                        {f?.market_cap != null && (
-                          <span className="hist-mcap">{formatLargeNum(f.market_cap)}</span>
-                        )}
                       </td>
                       <td className="num-col">{t.count.toLocaleString()}</td>
                       <td className="hist-subs">
@@ -438,9 +481,13 @@ export default function Historical() {
                           <span className="hist-sub-more">+{t.subreddits.length - 3}</span>
                         )}
                       </td>
-                      <td><SparklineChart data={t.sparkline} id={t.ticker} /></td>
-                      <td><TrendIcon trend={t.trend} /></td>
-                      <td><SentimentBadge sentiment={t.sentiment} /></td>
+                      <td><MentionSparkline data={t.sparkline} id={t.ticker} /></td>
+                      {hasMarketCap && (
+                        <td className="num-col">{f?.market_cap != null ? formatLargeNum(f.market_cap) : '-'}</td>
+                      )}
+                      {hasPriceData && (
+                        <td><PriceSparkline data={t.price_sparkline} /></td>
+                      )}
                     </tr>
                   )
                 })}
