@@ -131,6 +131,124 @@
   border-color: rgba(52, 211, 153, 0.6);
 }
 
+/* ── LLM Analyze Button ──────────────────────────────────────── */
+
+.td-llm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: rgb(129, 140, 248);
+  padding: 3px 10px;
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.td-llm-btn:hover {
+  background: rgba(129, 140, 248, 0.08);
+  border-color: rgba(129, 140, 248, 0.6);
+}
+
+/* ── Past LLM Analyses ───────────────────────────────────────── */
+
+.td-llm-analyses-section {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.td-llm-analyses-section h2 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  margin-bottom: 12px;
+}
+
+.td-llm-analyses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.td-llm-analysis-item {
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.td-llm-analysis-item:hover {
+  border-color: rgba(var(--accent), 0.3);
+}
+
+.td-llm-analysis-item.expanded {
+  border-color: rgba(var(--accent), 0.4);
+}
+
+.td-llm-analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+}
+
+.td-llm-analysis-model {
+  font-weight: 600;
+  color: rgb(var(--accent));
+}
+
+.td-llm-analysis-date {
+  color: rgb(var(--soft-text));
+  font-size: 0.78rem;
+}
+
+.td-llm-analysis-posts {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: rgb(var(--soft-text));
+}
+
+.td-llm-analysis-body {
+  padding: 0 14px 14px;
+}
+
+.td-llm-analysis-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.td-llm-analysis-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 0.75rem;
+  color: rgb(var(--soft-text));
+}
+
+.td-llm-analysis-response {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: rgb(var(--hard-text));
+  white-space: pre-wrap;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.td-llm-loading {
+  color: rgb(var(--soft-text));
+  font-size: 0.85rem;
+  padding: 8px 0;
+}
+
 /* ── Open Positions Section ─────────────────────────────────── */
 
 .td-positions-section {

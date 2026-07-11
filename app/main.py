@@ -22,6 +22,7 @@ from app.routers.reddit_stats import router as reddit_stats_router
 from app.routers.fundamentals import router as fundamentals_router
 from app.routers.trading import router as trading_router
 from app.routers.bots import router as bots_router
+from app.routers.analysis import router as analysis_router
 
 app_start_time: float = 0.0
 
@@ -62,6 +63,7 @@ app.include_router(reddit_stats_router)
 app.include_router(fundamentals_router)
 app.include_router(trading_router)
 app.include_router(bots_router)
+app.include_router(analysis_router)
 
 app.add_middleware(
     CORSMiddleware,

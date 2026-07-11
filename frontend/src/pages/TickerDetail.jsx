@@ -4,11 +4,12 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Line, Bar,
 } from 'recharts'
-import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser, FiBriefcase } from 'react-icons/fi'
+import { FiArrowLeft, FiExternalLink, FiTrendingUp, FiTrendingDown, FiArrowRight, FiPlus, FiUser, FiBriefcase, FiCpu } from 'react-icons/fi'
 import { get, post, del } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
 import TradeEntryModal from '../components/TradeEntryModal'
+import LLMAnalysisModal from '../components/LLMAnalysisModal'
 import PositionsTable from '../components/PositionsTable'
 import { recordTickerVisit } from './Tickers'
 import './TickerDetail.css'
@@ -62,6 +63,32 @@ function formatVolume(v) {
 }
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+function PastAnalysis({ id }) {
+  const [analysis, setAnalysis] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!id) return
+    setLoading(true)
+    get(`/analysis/${id}`)
+      .then((res) => setAnalysis(res))
+      .catch(() => setAnalysis(null))
+      .finally(() => setLoading(false))
+  }, [id])
+
+  if (loading) return <p className="td-llm-loading">Loading...</p>
+  if (!analysis) return <p className="td-llm-loading">Failed to load.</p>
+  return (
+    <div className="td-llm-analysis-content">
+      <div className="td-llm-analysis-meta">
+        <span>Model: {analysis.model}</span>
+        <span>Tokens: {analysis.input_tokens || '?'}</span>
+      </div>
+      <div className="td-llm-analysis-response">{analysis.response}</div>
+    </div>
+  )
+}
 
 function formatPriceTs(ts, range) {
   if (!ts) return ''
@@ -174,6 +201,12 @@ export default function TickerDetail() {
   const [tradeModalOpen, setTradeModalOpen] = useState(false)
   const [tickerTrades, setTickerTrades] = useState([])
   const [tradesLoading, setTradesLoading] = useState(true)
+
+  // LLM analysis state
+  const [llmModalOpen, setLlmModalOpen] = useState(false)
+  const [llmAnalyses, setLlmAnalyses] = useState([])
+  const [llmAnalysesLoading, setLlmAnalysesLoading] = useState(true)
+  const [expandedAnalysis, setExpandedAnalysis] = useState(null)
 
   // Record visit for recent tickers
   useEffect(() => {
@@ -298,7 +331,20 @@ export default function TickerDetail() {
     }
   }, [ticker])
 
+  const fetchLlmAnalyses = useCallback(async () => {
+    setLlmAnalysesLoading(true)
+    try {
+      const res = await get(`/analysis/history/${ticker}`)
+      setLlmAnalyses(res.analyses || [])
+    } catch {
+      setLlmAnalyses([])
+    } finally {
+      setLlmAnalysesLoading(false)
+    }
+  }, [ticker])
+
   useEffect(() => { fetchTickerTrades() }, [fetchTickerTrades])
+  useEffect(() => { fetchLlmAnalyses() }, [fetchLlmAnalyses])
   useEffect(() => { fetchDetail() }, [fetchDetail])
   useEffect(() => {
     if (bottomTab === 'authors') fetchAuthors()
@@ -424,6 +470,13 @@ export default function TickerDetail() {
               title="Open a paper trade"
             >
               <FiBriefcase /> Trade
+            </button>
+            <button
+              className="td-llm-btn"
+              onClick={() => setLlmModalOpen(true)}
+              title="Analyze posts with LLM"
+            >
+              <FiCpu /> Analyze
             </button>
           </div>
           {data && (
@@ -917,12 +970,52 @@ export default function TickerDetail() {
         </div>
       )}
 
+      {/* Past LLM Analyses */}
+      {llmAnalyses.length > 0 && (
+        <div className="td-llm-analyses-section">
+          <h2>LLM Analyses</h2>
+          <div className="td-llm-analyses-list">
+            {llmAnalyses.map((a) => (
+              <div
+                key={a.id}
+                className={`td-llm-analysis-item ${expandedAnalysis === a.id ? 'expanded' : ''}`}
+                onClick={() => setExpandedAnalysis(expandedAnalysis === a.id ? null : a.id)}
+              >
+                <div className="td-llm-analysis-header">
+                  <span className="td-llm-analysis-model">{a.model.split('/').pop()}</span>
+                  <span className="td-llm-analysis-date">
+                    {new Date(a.created_at_iso).toLocaleString()}
+                  </span>
+                  <span className="td-llm-analysis-posts">{a.post_count} posts</span>
+                </div>
+                {expandedAnalysis === a.id && (
+                  <div className="td-llm-analysis-body">
+                    <PastAnalysis id={a.id} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <TradeEntryModal
         isOpen={tradeModalOpen}
         onClose={() => setTradeModalOpen(false)}
         onTradeOpened={fetchTickerTrades}
         prefillTicker={ticker?.toUpperCase()}
         prefillPrice={marketInfo?.current_price ? String(marketInfo.current_price) : ''}
+      />
+
+      <LLMAnalysisModal
+        isOpen={llmModalOpen}
+        onClose={() => {
+          setLlmModalOpen(false)
+          fetchLlmAnalyses()
+        }}
+        ticker={ticker?.toUpperCase()}
+        prefillDateFrom={postDateFrom}
+        prefillDateTo={postDateTo}
       />
     </div>
   )

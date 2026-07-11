@@ -442,6 +442,21 @@ class RedditDatabase:
                 total_trades        INTEGER DEFAULT 0,
                 FOREIGN KEY (strategy_id) REFERENCES strategies(id)
             );
+
+            CREATE TABLE IF NOT EXISTS llm_analyses (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker          TEXT NOT NULL,
+                model           TEXT NOT NULL,
+                system_prompt   TEXT NOT NULL,
+                user_prompt     TEXT NOT NULL,
+                response        TEXT NOT NULL,
+                post_count      INTEGER NOT NULL DEFAULT 0,
+                input_tokens    INTEGER,
+                created_at      REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_llm_analyses_ticker ON llm_analyses(ticker);
+            CREATE INDEX IF NOT EXISTS idx_llm_analyses_created ON llm_analyses(created_at DESC);
         """)
         self.conn.commit()
 
@@ -1161,6 +1176,41 @@ class RedditDatabase:
         """Get the strategy linked to a bot."""
         row = self.conn.execute(
             "SELECT * FROM strategies WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ── LLM Analyses ──────────────────────────────────────────────
+
+    def save_llm_analysis(self, ticker: str, model: str, system_prompt: str,
+                          user_prompt: str, response: str, post_count: int,
+                          input_tokens: int | None = None) -> int:
+        import time as _time
+        now = _time.time()
+        cur = self.conn.execute(
+            """INSERT INTO llm_analyses
+               (ticker, model, system_prompt, user_prompt, response,
+                post_count, input_tokens, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ticker.upper(), model, system_prompt, user_prompt, response,
+             post_count, input_tokens, now),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def list_llm_analyses(self, ticker: str, limit: int = 20) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT id, ticker, model, post_count, input_tokens, created_at,
+                      substr(response, 1, 200) as response_preview
+               FROM llm_analyses WHERE ticker = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (ticker.upper(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_llm_analysis(self, analysis_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM llm_analyses WHERE id = ?",
+            (analysis_id,),
         ).fetchone()
         return dict(row) if row else None
 

@@ -1,0 +1,430 @@
+.llm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.llm-modal {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 14px;
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.2);
+}
+
+.llm-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 0;
+  flex-shrink: 0;
+}
+
+.llm-modal-header h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 0;
+}
+
+.llm-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.llm-modal-close:hover {
+  background: rgba(var(--soft-border), 0.1);
+  color: rgb(var(--hard-text));
+}
+
+.llm-modal-body {
+  padding: 16px 22px 22px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Config Section ────────────────────────────────────────────── */
+
+.llm-config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.llm-config-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.llm-config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.llm-config-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-model-select,
+.llm-date-input {
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+}
+
+.llm-model-select:focus,
+.llm-date-input:focus {
+  border-color: rgb(var(--accent));
+}
+
+.llm-model-select {
+  min-width: 200px;
+}
+
+.llm-stage-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  background: rgb(var(--accent));
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.llm-stage-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.llm-prompt-group {
+  flex: 1;
+}
+
+.llm-system-prompt {
+  width: 100%;
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  color: rgb(var(--hard-text));
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.llm-system-prompt:focus {
+  border-color: rgb(var(--accent));
+}
+
+/* ── Staged Posts Section ──────────────────────────────────────── */
+
+.llm-staged-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.llm-staged-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.llm-staged-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+}
+
+.llm-token-est {
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+}
+
+.llm-token-est strong {
+  color: rgb(var(--accent));
+}
+
+.llm-staged-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.llm-staged-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.llm-staged-item:last-child {
+  border-bottom: none;
+}
+
+.llm-staged-item:hover {
+  background: rgba(var(--accent), 0.03);
+}
+
+.llm-staged-item.excluded {
+  opacity: 0.35;
+}
+
+.llm-staged-check {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.llm-staged-check input {
+  accent-color: rgb(var(--accent));
+  cursor: pointer;
+}
+
+.llm-staged-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.llm-staged-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.llm-staged-type {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.llm-staged-type.post {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(129, 140, 248);
+}
+
+.llm-staged-type.comment {
+  background: rgba(52, 211, 153, 0.15);
+  color: rgb(52, 211, 153);
+}
+
+.llm-staged-post-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-staged-preview {
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+  margin: 0;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.llm-staged-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+}
+
+.llm-staged-sub {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.llm-staged-author {
+  font-size: 0.72rem;
+}
+
+.llm-staged-stat {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.llm-staged-time {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.llm-staged-truncated {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(251, 146, 60, 0.15);
+  color: rgb(251, 146, 60);
+}
+
+.llm-staged-ext {
+  display: flex;
+  align-items: center;
+  color: rgb(var(--soft-text));
+  opacity: 0.5;
+  transition: opacity 0.12s;
+}
+
+.llm-staged-ext:hover {
+  opacity: 1;
+}
+
+/* ── Run Button ────────────────────────────────────────────────── */
+
+.llm-run-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: rgb(var(--accent));
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  align-self: flex-start;
+}
+
+.llm-run-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Stream Output ─────────────────────────────────────────────── */
+
+.llm-stream-section {
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: rgb(var(--secondary-color));
+}
+
+.llm-stream-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.llm-stream-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.llm-saved-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: rgb(52, 211, 153);
+}
+
+.llm-stream-output {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: rgb(var(--hard-text));
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.llm-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: rgb(var(--accent));
+  animation: llm-blink 1s infinite;
+  vertical-align: text-bottom;
+  margin-left: 1px;
+}
+
+@keyframes llm-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* ── Error ──────────────────────────────────────────────────────── */
+
+.llm-error {
+  color: rgb(239, 68, 68);
+  font-size: 0.85rem;
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 8px;
+}
+
+/* ── Spin Animation ────────────────────────────────────────────── */
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
