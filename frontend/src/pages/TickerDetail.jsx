@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Line, Bar,
@@ -134,6 +134,8 @@ function mergePriceMentions(prices, mentions, range) {
 export default function TickerDetail() {
   const { ticker } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const dateParam = searchParams.get('date')
   const [window, setWindow] = usePersistedState('ticker-detail-window', '7d')
   const [countMode, setCountMode] = usePersistedState('count-mode', 'mentions')
   const [data, setData] = useState(null)
@@ -185,14 +187,16 @@ export default function TickerDetail() {
     setLoading(true)
     setError(null)
     try {
-      const res = await get(`/tickers/${ticker}?window=${window}&count_mode=${countMode}`)
+      const params = new URLSearchParams({ window, count_mode: countMode })
+      if (dateParam) params.set('date', dateParam)
+      const res = await get(`/tickers/${ticker}?${params}`)
       setData(res)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [ticker, window, countMode])
+  }, [ticker, window, countMode, dateParam])
 
   // Fetch price chart
   const fetchPriceChart = useCallback(async () => {
@@ -270,14 +274,16 @@ export default function TickerDetail() {
   const fetchAuthors = useCallback(async () => {
     setAuthorLoading(true)
     try {
-      const res = await get(`/tickers/${ticker}/authors?window=${window}`)
+      const params = new URLSearchParams({ window })
+      if (dateParam) params.set('date', dateParam)
+      const res = await get(`/tickers/${ticker}/authors?${params}`)
       setAuthorData(res)
     } catch {
       setAuthorData(null)
     } finally {
       setAuthorLoading(false)
     }
-  }, [ticker, window])
+  }, [ticker, window, dateParam])
 
   // Fetch open trades for this ticker
   const fetchTickerTrades = useCallback(async () => {
@@ -451,6 +457,17 @@ export default function TickerDetail() {
       </div>
 
       {error && <div className="td-error">Failed to load: {error}</div>}
+
+      {dateParam && (
+        <div className="td-date-banner">
+          Historical view: {new Date(dateParam + 'T00:00:00').toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+          })}
+          <button className="td-date-clear" onClick={() => navigate(`/tickers/${ticker}`)}>
+            Back to live
+          </button>
+        </div>
+      )}
 
       {/* Market Info Cards */}
       {(marketInfo || infoLoading) && (

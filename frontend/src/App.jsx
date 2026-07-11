@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import TrendingDashboard from './pages/TrendingDashboard'
+import Historical from './pages/Historical'
 import Tickers from './pages/Tickers'
 import TickerDetail from './pages/TickerDetail'
 import Sources from './pages/Sources'
@@ -23,6 +24,7 @@ function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<TrendingDashboard />} />
+        <Route path="/historical" element={<Historical />} />
         <Route path="/tickers" element={<Tickers />} />
         <Route path="/tickers/:ticker" element={<TickerDetail />} />
         <Route path="/sources" element={<Sources />} />

@@ -179,6 +179,173 @@
   opacity: 0.7;
 }
 
+.tickers-clear-btn {
+  margin-top: 8px;
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  color: rgb(var(--accent));
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: border-color 0.15s;
+}
+
+.tickers-clear-btn:hover {
+  border-color: rgb(var(--accent));
+}
+
+/* ── Directory Header ────────────────────────────────────────── */
+
+.tickers-directory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tickers-total-count {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: rgb(var(--soft-text));
+  text-transform: none;
+}
+
+/* ── Filter Dropdown ──────────────────────────────────────────── */
+
+.tickers-filter-dropdown {
+  min-width: 240px;
+}
+
+.tickers-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.tickers-filter-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgb(var(--soft-text));
+}
+
+.tickers-filter-select,
+.tickers-filter-input {
+  background: rgb(var(--bg-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  color: rgb(var(--hard-text));
+  outline: none;
+}
+
+.tickers-filter-select:focus,
+.tickers-filter-input:focus {
+  border-color: rgb(var(--accent));
+}
+
+/* ── Directory Table ─────────────────────────────────────────── */
+
+.tickers-table-wrap {
+  overflow-x: auto;
+}
+
+.tickers-dir-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tickers-dir-table thead th {
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  border-bottom: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tickers-dir-table thead th.sortable:hover {
+  color: rgb(var(--hard-text));
+}
+
+.tickers-dir-table tbody tr {
+  border-bottom: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.tickers-dir-table tbody tr:hover {
+  background: rgba(var(--accent), 0.04);
+}
+
+.tickers-dir-table td {
+  padding: 10px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tickers-dir-table .num-col {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tickers-dir-table .ticker-cell {
+  font-weight: 700;
+  color: rgb(var(--accent));
+}
+
+.tickers-dir-table .ticker-name-cell {
+  max-width: 200px;
+  color: rgb(var(--soft-text));
+}
+
+/* ── Pagination ─────────────────────────────────────────────── */
+
+.tickers-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.tickers-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 8px;
+  background: rgb(var(--primary-color));
+  color: rgb(var(--hard-text));
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.tickers-page-btn:hover:not(:disabled) {
+  border-color: rgb(var(--accent));
+}
+
+.tickers-page-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tickers-page-info {
+  font-size: 0.85rem;
+  color: rgb(var(--soft-text));
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Responsive ──────────────────────────────────────────────── */
 
 @media (max-width: 767px) {

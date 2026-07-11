@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { FiBarChart2, FiTrendingUp, FiDatabase, FiTag, FiActivity, FiServer, FiUsers, FiBriefcase, FiCpu } from 'react-icons/fi'
+import { FiBarChart2, FiTrendingUp, FiClock, FiDatabase, FiTag, FiActivity, FiServer, FiUsers, FiBriefcase, FiCpu } from 'react-icons/fi'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
   { to: '/', icon: FiBarChart2, label: 'Trending' },
+  { to: '/historical', icon: FiClock, label: 'Historical' },
   { to: '/tickers', icon: FiTrendingUp, label: 'Tickers' },
   { to: '/entities', icon: FiUsers, label: 'Entities' },
   { to: '/trading', icon: FiBriefcase, label: 'Paper Trading' },

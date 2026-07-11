@@ -6,7 +6,7 @@ import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import './TrendingDashboard.css'
 
-const WINDOWS = ['1h', '6h', '24h', '7d']
+const WINDOWS = ['1h', '6h', '24h', '7d', '1M', '3M', '6M', '1Y']
 const LIMIT_OPTIONS = [20, 50, 100]
 const COUNT_MODES = [
   { value: 'mentions', label: 'Mentions' },

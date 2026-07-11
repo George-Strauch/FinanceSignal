@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FiSearch, FiClock } from 'react-icons/fi'
+import { FiSearch, FiClock, FiChevronLeft, FiChevronRight, FiFilter } from 'react-icons/fi'
 import { get } from '../api/client'
 import './Tickers.css'
 
 const RECENT_KEY = 'recent-ticker-visits'
 const MAX_RECENT = 25
+const PAGE_SIZE = 50
 
 function getRecentTickers() {
   try {
@@ -25,26 +26,82 @@ export default function Tickers() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
   const [recentTickers, setRecentTickers] = useState([])
+
+  const [directory, setDirectory] = useState(null)
+  const [dirLoading, setDirLoading] = useState(true)
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [sortKey, setSortKey] = useState('total_mentions')
+  const [sortDir, setSortDir] = useState('desc')
+
+  const [allTagSets, setAllTagSets] = useState([])
+  const [allSectors, setAllSectors] = useState([])
+  const [filterTagId, setFilterTagId] = useState(null)
+  const [filterSector, setFilterSector] = useState(null)
+  const [filterMinMentions, setFilterMinMentions] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterRef = useRef(null)
 
   useEffect(() => {
     setRecentTickers(getRecentTickers())
   }, [])
+
+  useEffect(() => {
+    get('/ticker-tags').then((res) => setAllTagSets(res.tag_sets)).catch(() => {})
+    get('/tickers/sectors').then((res) => setAllSectors(res.sectors)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (filterRef.current && !filterRef.current.contains(e.target)) setFilterOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const fetchDirectory = useCallback(async () => {
+    setDirLoading(true)
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(PAGE_SIZE),
+        sort: sortKey,
+        order: sortDir,
+      })
+      if (query.trim()) params.set('q', query.trim().toUpperCase())
+      if (filterTagId != null) params.set('tag_id', String(filterTagId))
+      if (filterSector) params.set('sector', filterSector)
+      if (filterMinMentions) params.set('min_mentions', String(filterMinMentions))
+      const res = await get(`/tickers/directory?${params}`)
+      setDirectory(res.tickers)
+      setTotalCount(res.total_count)
+    } catch {
+      setDirectory([])
+      setTotalCount(0)
+    } finally {
+      setDirLoading(false)
+    }
+  }, [page, sortKey, sortDir, query, filterTagId, filterSector, filterMinMentions])
+
+  useEffect(() => {
+    if (!searchLoading) fetchDirectory()
+  }, [fetchDirectory, searchLoading])
 
   const search = useCallback(async (q) => {
     if (!q.trim()) {
       setResults(null)
       return
     }
-    setLoading(true)
+    setSearchLoading(true)
     try {
       const res = await get(`/tickers/search?q=${encodeURIComponent(q)}&limit=50`)
       setResults(res.results)
     } catch {
       setResults([])
     } finally {
-      setLoading(false)
+      setSearchLoading(false)
     }
   }, [])
 
@@ -65,7 +122,31 @@ export default function Tickers() {
     }
   }
 
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('desc')
+    }
+    setPage(1)
+  }
+
+  const sortIndicator = (key) => {
+    if (sortKey !== key) return ''
+    return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
+  }
+
   const showingSearch = results !== null
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const hasFilters = filterTagId != null || filterSector || filterMinMentions
+
+  const clearFilters = () => {
+    setFilterTagId(null)
+    setFilterSector(null)
+    setFilterMinMentions('')
+    setPage(1)
+  }
 
   return (
     <div className="tickers-page">
@@ -89,7 +170,7 @@ export default function Tickers() {
         <p className="tickers-empty">No tickers matching "{query}"</p>
       )}
 
-      {loading && !results && <p className="tickers-loading">Searching...</p>}
+      {searchLoading && !results && <p className="tickers-loading">Searching...</p>}
 
       {showingSearch && results?.length > 0 && (
         <div className="tickers-results-list">
@@ -116,34 +197,189 @@ export default function Tickers() {
         </div>
       )}
 
-      {!showingSearch && recentTickers.length > 0 && (
+      {!showingSearch && (
         <>
-          <div className="tickers-section-label">
-            <FiClock /> Recently Visited
-          </div>
-          <div className="tickers-recent-grid">
-            {recentTickers.map((ticker) => (
-              <div
-                key={ticker}
-                className="ticker-recent-card"
-                onClick={() => goToTicker(ticker)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === 'Enter' && goToTicker(ticker)}
-              >
-                <span className="ticker-recent-symbol">{ticker}</span>
+          {recentTickers.length > 0 && (
+            <>
+              <div className="tickers-section-label">
+                <FiClock /> Recently Visited
               </div>
-            ))}
-          </div>
-        </>
-      )}
+              <div className="tickers-recent-grid">
+                {recentTickers.map((ticker) => (
+                  <div
+                    key={ticker}
+                    className="ticker-recent-card"
+                    onClick={() => goToTicker(ticker)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && goToTicker(ticker)}
+                  >
+                    <span className="ticker-recent-symbol">{ticker}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
 
-      {!showingSearch && recentTickers.length === 0 && (
-        <div className="tickers-empty-state">
-          <FiSearch className="tickers-empty-icon" />
-          <p>Search for a ticker above to get started.</p>
-          <p className="tickers-empty-hint">Recently visited tickers will appear here.</p>
-        </div>
+          <div className="tickers-directory-header">
+            <div className="tickers-section-label">
+              All Tickers <span className="tickers-total-count">({totalCount.toLocaleString()})</span>
+            </div>
+            {(allTagSets.length > 0 || allSectors.length > 0) && (
+              <div className="tag-filter-wrap" ref={filterRef}>
+                <button
+                  className={`toggle-btn tag-filter-btn ${hasFilters ? 'active' : ''}`}
+                  onClick={() => setFilterOpen((v) => !v)}
+                  title="Filters"
+                >
+                  <FiFilter />
+                  {hasFilters && <span className="tag-filter-count">
+                    {[filterTagId, filterSector, filterMinMentions].filter(Boolean).length}
+                  </span>}
+                </button>
+                {filterOpen && (
+                  <div className="tag-filter-dropdown tickers-filter-dropdown">
+                    <div className="tag-filter-title">Filters</div>
+
+                    {allTagSets.length > 0 && (
+                      <div className="tickers-filter-group">
+                        <label className="tickers-filter-label">Tag</label>
+                        <select
+                          className="tickers-filter-select"
+                          value={filterTagId ?? ''}
+                          onChange={(e) => { setFilterTagId(e.target.value ? Number(e.target.value) : null); setPage(1) }}
+                        >
+                          <option value="">All</option>
+                          {allTagSets.map((ts) => (
+                            <option key={ts.id} value={ts.id}>{ts.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {allSectors.length > 0 && (
+                      <div className="tickers-filter-group">
+                        <label className="tickers-filter-label">Sector</label>
+                        <select
+                          className="tickers-filter-select"
+                          value={filterSector ?? ''}
+                          onChange={(e) => { setFilterSector(e.target.value || null); setPage(1) }}
+                        >
+                          <option value="">All</option>
+                          {allSectors.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="tickers-filter-group">
+                      <label className="tickers-filter-label">Min Mentions</label>
+                      <input
+                        type="number"
+                        className="tickers-filter-input"
+                        placeholder="0"
+                        value={filterMinMentions}
+                        onChange={(e) => { setFilterMinMentions(e.target.value); setPage(1) }}
+                      />
+                    </div>
+
+                    {hasFilters && (
+                      <button className="tag-filter-clear" onClick={clearFilters}>
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {dirLoading && <p className="tickers-loading">Loading tickers...</p>}
+
+          {!dirLoading && directory?.length === 0 && (
+            <div className="tickers-empty-state">
+              <FiSearch className="tickers-empty-icon" />
+              <p>No tickers found{hasFilters ? ' with current filters' : ''}.</p>
+              {hasFilters && (
+                <button className="tickers-clear-btn" onClick={clearFilters}>Clear filters</button>
+              )}
+            </div>
+          )}
+
+          {!dirLoading && directory?.length > 0 && (
+            <>
+              <div className="tickers-table-wrap">
+                <table className="tickers-dir-table">
+                  <thead>
+                    <tr>
+                      <th className="sortable" onClick={() => handleSort('ticker')}>
+                        Ticker{sortIndicator('ticker')}
+                      </th>
+                      <th>Name</th>
+                      <th className="sortable num-col" onClick={() => handleSort('total_mentions')}>
+                        Mentions{sortIndicator('total_mentions')}
+                      </th>
+                      <th className="sortable num-col" onClick={() => handleSort('last_mention')}>
+                        Last Mention{sortIndicator('last_mention')}
+                      </th>
+                      <th>Sector</th>
+                      <th>Tags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {directory.map((t) => (
+                      <tr
+                        key={t.ticker}
+                        onClick={() => goToTicker(t.ticker)}
+                        className="clickable-row"
+                      >
+                        <td className="ticker-cell">{t.ticker}</td>
+                        <td className="ticker-name-cell">{t.name || '-'}</td>
+                        <td className="num-col">{t.total_mentions.toLocaleString()}</td>
+                        <td className="num-col">
+                          {t.last_mention ? new Date(t.last_mention).toLocaleDateString() : '-'}
+                        </td>
+                        <td>{t.sector || '-'}</td>
+                        <td>
+                          <div className="table-tags">
+                            {t.tags?.map((tag) => (
+                              <span key={tag.id} className="tag-chip" style={{ backgroundColor: tag.color }}>
+                                {tag.name}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="tickers-pagination">
+                  <button
+                    className="tickers-page-btn"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                  >
+                    <FiChevronLeft />
+                  </button>
+                  <span className="tickers-page-info">
+                    Page {page} of {totalPages}
+                  </span>
+                  <button
+                    className="tickers-page-btn"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    <FiChevronRight />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
     </div>
   )
