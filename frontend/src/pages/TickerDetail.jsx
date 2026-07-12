@@ -65,6 +65,67 @@ function formatVolume(v) {
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+function formatUTC(epoch) {
+  if (!epoch) return ''
+  const d = new Date(epoch * 1000)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const min = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day} ${h}:${min} UTC`
+}
+
+function formatRelativeTime(epoch) {
+  if (!epoch) return ''
+  const diff = Date.now() / 1000 - epoch
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+const PAST_SUB_COLORS = [
+  '99, 102, 241', '244, 114, 182', '52, 211, 153', '251, 191, 36',
+  '96, 165, 250', '167, 139, 250', '248, 113, 113', '45, 212, 191',
+  '253, 186, 116', '156, 163, 175',
+]
+
+function pastSubColor(subreddit) {
+  let hash = 0
+  for (let i = 0; i < subreddit.length; i++)
+    hash = ((hash << 5) - hash + subreddit.charCodeAt(i)) | 0
+  return PAST_SUB_COLORS[Math.abs(hash) % PAST_SUB_COLORS.length]
+}
+
+function PastAnalysisStagePost({ post }) {
+  const color = pastSubColor(post.subreddit || '')
+  return (
+    <div className="td-past-post">
+      <div className="td-past-post-title-row">
+        <span className={`td-past-post-type ${post.type}`}>{post.type}</span>
+        {post.title && <span className="td-past-post-title">{post.title}</span>}
+      </div>
+      <p className="td-past-post-preview">
+        {(post.body || '').slice(0, 150)}{(post.body || '').length > 150 ? '...' : ''}
+      </p>
+      <div className="td-past-post-meta">
+        <span
+          className="td-past-post-sub"
+          style={{ background: `rgba(${color}, 0.15)`, color: `rgb(${color})` }}
+        >
+          r/{post.subreddit}
+        </span>
+        <span className="td-past-post-author">u/{post.author}</span>
+        <span className="td-past-post-stat">↑ {post.score}</span>
+        <span className="td-past-post-time">
+          {formatRelativeTime(post.created_utc)}
+          <span className="td-past-post-time-utc">{formatUTC(post.created_utc)}</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function PastAnalysis({ id }) {
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -80,14 +141,63 @@ function PastAnalysis({ id }) {
 
   if (loading) return <p className="td-llm-loading">Loading...</p>
   if (!analysis) return <p className="td-llm-loading">Failed to load.</p>
+
+  const staged = analysis.staged_posts || []
+  const dateRange = staged.length > 0
+    ? (() => {
+        const times = staged.map((p) => p.created_utc).filter(Boolean)
+        if (!times.length) return null
+        const min = Math.min(...times)
+        const max = Math.max(...times)
+        return { min, max }
+      })()
+    : null
+
   return (
-    <div className="td-llm-analysis-content">
-      <div className="td-llm-analysis-meta">
-        <span>Model: {analysis.model}</span>
-        <span>Tokens: {analysis.input_tokens || '?'}</span>
-      </div>
-      <div className="td-llm-analysis-response">
+    <div className="td-past-analysis-layout">
+      <div className="td-past-analysis-response">
         <ReactMarkdown>{analysis.response}</ReactMarkdown>
+      </div>
+      <div className="td-past-analysis-sidebar">
+        <div className="td-past-meta-panel">
+          <div className="td-past-meta-row">
+            <span className="td-past-meta-label">Model</span>
+            <span className="td-past-meta-value">{analysis.model.split('/').pop()}</span>
+          </div>
+          <div className="td-past-meta-row">
+            <span className="td-past-meta-label">Created</span>
+            <span className="td-past-meta-value">{new Date(analysis.created_at_iso).toLocaleString()}</span>
+          </div>
+          {dateRange && (
+            <div className="td-past-meta-row">
+              <span className="td-past-meta-label">Post Range</span>
+              <span className="td-past-meta-value">
+                {formatUTC(dateRange.min)} → {formatUTC(dateRange.max)}
+              </span>
+            </div>
+          )}
+          <div className="td-past-meta-row">
+            <span className="td-past-meta-label">Posts</span>
+            <span className="td-past-meta-value">{analysis.post_count}</span>
+          </div>
+          <div className="td-past-meta-row">
+            <span className="td-past-meta-label">Tokens</span>
+            <span className="td-past-meta-value">{analysis.input_tokens || '?'}</span>
+          </div>
+        </div>
+
+        {staged.length > 0 && (
+          <div className="td-past-posts-panel">
+            <div className="td-past-posts-header">
+              Staged Posts ({staged.length})
+            </div>
+            <div className="td-past-posts-list">
+              {staged.map((p) => (
+                <PastAnalysisStagePost key={p.id} post={p} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

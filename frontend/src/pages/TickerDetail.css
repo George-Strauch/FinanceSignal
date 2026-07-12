@@ -221,32 +221,244 @@
   padding: 0 14px 14px;
 }
 
-.td-llm-analysis-content {
+/* ── Past Analysis Side-by-Side Layout ─────────────────────────── */
+
+.td-past-analysis-layout {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: 14px;
+  max-height: 600px;
 }
 
-.td-llm-analysis-meta {
-  display: flex;
-  gap: 16px;
-  font-size: 0.75rem;
-  color: rgb(var(--soft-text));
-}
-
-.td-llm-analysis-response {
+.td-past-analysis-response {
+  flex: 1;
+  min-width: 0;
   font-size: 0.85rem;
   line-height: 1.6;
   color: rgb(var(--hard-text));
-  white-space: pre-wrap;
-  max-height: 500px;
   overflow-y: auto;
+  max-width: 620px;
+  padding-right: 8px;
+}
+
+.td-past-analysis-response h1,
+.td-past-analysis-response h2,
+.td-past-analysis-response h3 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: rgb(var(--hard-text));
+  margin: 10px 0 4px;
+}
+
+.td-past-analysis-response p {
+  margin: 0 0 8px;
+}
+
+.td-past-analysis-response ul,
+.td-past-analysis-response ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.td-past-analysis-response li {
+  margin-bottom: 3px;
+}
+
+.td-past-analysis-response strong {
+  font-weight: 700;
+}
+
+.td-past-analysis-response blockquote {
+  border-left: 3px solid rgba(var(--accent), 0.4);
+  padding-left: 10px;
+  margin: 6px 0;
+  color: rgb(var(--soft-text));
+}
+
+.td-past-analysis-response code {
+  background: rgba(var(--soft-border), 0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+}
+
+.td-past-analysis-sidebar {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.td-past-meta-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background: rgba(var(--soft-border), 0.06);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.td-past-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.td-past-meta-label {
+  color: rgb(var(--soft-text));
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.td-past-meta-value {
+  color: rgb(var(--hard-text));
+  text-align: right;
+  font-size: 0.76rem;
+  font-family: monospace;
+}
+
+.td-past-posts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.td-past-posts-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+  padding: 2px 0;
+}
+
+.td-past-posts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  max-height: 480px;
+}
+
+.td-past-post {
+  padding: 8px 10px;
+  border: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.td-past-post:hover {
+  border-color: rgba(var(--accent), 0.2);
+}
+
+.td-past-post-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.td-past-post-type {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.td-past-post-type.post {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(129, 140, 248);
+}
+
+.td-past-post-type.comment {
+  background: rgba(52, 211, 153, 0.15);
+  color: rgb(52, 211, 153);
+}
+
+.td-past-post-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.td-past-post-preview {
+  font-size: 0.74rem;
+  color: rgb(var(--soft-text));
+  margin: 0;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.td-past-post-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.7rem;
+  color: rgb(var(--soft-text));
+}
+
+.td-past-post-sub {
+  font-size: 0.66rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.td-past-post-author {
+  font-size: 0.7rem;
+}
+
+.td-past-post-stat {
+  font-size: 0.7rem;
+}
+
+.td-past-post-time {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+  margin-left: auto;
+}
+
+.td-past-post-time-utc {
+  font-size: 0.62rem;
+  opacity: 0.6;
+  font-family: monospace;
 }
 
 .td-llm-loading {
   color: rgb(var(--soft-text));
   font-size: 0.85rem;
   padding: 8px 0;
+}
+
+@media (max-width: 900px) {
+  .td-past-analysis-layout {
+    flex-direction: column;
+    max-height: none;
+  }
+  .td-past-analysis-sidebar {
+    width: 100%;
+  }
+  .td-past-analysis-response {
+    max-width: 100%;
+  }
 }
 
 /* ── Open Positions Section ─────────────────────────────────── */

@@ -495,6 +495,7 @@ class RedditDatabase:
             "ALTER TABLE strategies ADD COLUMN bot_id TEXT DEFAULT NULL",
             "ALTER TABLE strategies ADD COLUMN live_trading INTEGER DEFAULT 0",
             "ALTER TABLE strategies ADD COLUMN last_evaluated_at REAL DEFAULT NULL",
+            "ALTER TABLE llm_analyses ADD COLUMN staged_posts TEXT",
         ]:
             try:
                 self.conn.execute(col_sql)
@@ -1213,16 +1214,18 @@ class RedditDatabase:
 
     def save_llm_analysis(self, ticker: str, model: str, system_prompt: str,
                           user_prompt: str, response: str, post_count: int,
-                          input_tokens: int | None = None) -> int:
+                          input_tokens: int | None = None,
+                          staged_posts: list | None = None) -> int:
         import time as _time
         now = _time.time()
+        staged_json = json.dumps(staged_posts) if staged_posts else None
         cur = self.conn.execute(
             """INSERT INTO llm_analyses
                (ticker, model, system_prompt, user_prompt, response,
-                post_count, input_tokens, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                post_count, input_tokens, created_at, staged_posts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ticker.upper(), model, system_prompt, user_prompt, response,
-             post_count, input_tokens, now),
+             post_count, input_tokens, now, staged_json),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -1242,7 +1245,18 @@ class RedditDatabase:
             "SELECT * FROM llm_analyses WHERE id = ?",
             (analysis_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        staged = result.get("staged_posts")
+        if staged:
+            try:
+                result["staged_posts"] = json.loads(staged)
+            except (json.JSONDecodeError, TypeError):
+                result["staged_posts"] = []
+        else:
+            result["staged_posts"] = []
+        return result
 
     def create_bot_strategy(self, bot_id: str, title: str, description: str = "",
                             color: str = "#6366f1") -> dict:
