@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { FiExternalLink, FiArrowUp, FiMessageSquare } from 'react-icons/fi'
+import { FiExternalLink, FiArrowUp, FiMessageSquare, FiTarget } from 'react-icons/fi'
 
 const SUB_COLORS = [
   '99, 102, 241',
@@ -44,6 +44,18 @@ function formatUTC(epoch) {
   const h = String(d.getUTCHours()).padStart(2, '0')
   const min = String(d.getUTCMinutes()).padStart(2, '0')
   return `${y}-${m}-${day} ${h}:${min} UTC`
+}
+
+function scoreClass(score) {
+  if (score == null) return ''
+  if (score >= 0.7) return 'rel-high'
+  if (score >= 0.4) return 'rel-mid'
+  return 'rel-low'
+}
+
+function fmtScore(score) {
+  if (score == null) return ''
+  return score.toFixed(1)
 }
 
 export default function PostCard({ post, highlightTicker }) {
@@ -107,18 +119,45 @@ export default function PostCard({ post, highlightTicker }) {
         </span>
       </div>
 
-      {post.tickers_mentioned && post.tickers_mentioned.length > 0 && (
-        <div className="post-card-tickers">
-          {post.tickers_mentioned.map((t) => (
-            <Link
-              key={t}
-              to={`/tickers/${t}`}
-              className={`post-card-ticker-chip ${t === highlightTicker?.toUpperCase() ? 'current' : ''}`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {t}
-            </Link>
-          ))}
+      {(post.tickers_mentioned?.length > 0 || post.entities_mentioned?.length > 0) && (
+        <div className="post-card-tags">
+          {post.tickers_mentioned?.map((t) => {
+            const score = post.ticker_scores?.[t]
+            return (
+              <Link
+                key={`tk-${t}`}
+                to={`/tickers/${t}`}
+                className={`post-card-ticker-chip ${t === highlightTicker?.toUpperCase() ? 'current' : ''} ${scoreClass(score)}`}
+                onClick={(e) => e.stopPropagation()}
+                title={score != null ? `Relevance: ${score.toFixed(3)}` : undefined}
+              >
+                {t}
+                {score != null && <span className="chip-score">{fmtScore(score)}</span>}
+              </Link>
+            )
+          })}
+          {post.entities_mentioned?.map((e) => {
+            const score = post.entity_scores?.[e]
+            return (
+              <Link
+                key={`ne-${e}`}
+                to={`/entities/${encodeURIComponent(e)}`}
+                className={`post-card-entity-chip ${scoreClass(score)}`}
+                onClick={(ev) => ev.stopPropagation()}
+                title={score != null ? `Relevance: ${score.toFixed(3)}` : undefined}
+              >
+                {e}
+                {score != null && <span className="chip-score">{fmtScore(score)}</span>}
+              </Link>
+            )
+          })}
+        </div>
+      )}
+
+      {post.relevance_score != null && (
+        <div className={`post-card-relevance-badge ${scoreClass(post.relevance_score)}`}>
+          <FiTarget />
+          <span>{(post.relevance_score * 100).toFixed(0)}% relevant</span>
         </div>
       )}
     </div>

@@ -8,6 +8,7 @@ const SORT_LABELS = {
   date: 'Newest',
   score: 'Top',
   comments: 'Most Comments',
+  relevance: 'Relevance',
 }
 
 const DATE_PRESETS = [
@@ -86,6 +87,9 @@ export default function PostFeed({
 
   useEffect(() => { fetchPosts() }, [fetchPosts])
   useEffect(() => { setPage(1) }, [sort, ticker, subreddit, entity, author, dateFrom, dateTo])
+  useEffect(() => {
+    if (sort === 'relevance' && !ticker && !entity) setSort('date')
+  }, [sort, ticker, entity])
 
   /** Detect which preset is currently active */
   const activePreset = useMemo(() => {
@@ -107,15 +111,19 @@ export default function PostFeed({
       <div className="post-feed-header">
         <h2 className="post-feed-title">{title}</h2>
         <div className="post-feed-sort">
-          {Object.entries(SORT_LABELS).map(([key, label]) => (
-            <button
-              key={key}
-              className={`pf-sort-btn ${sort === key ? 'active' : ''}`}
-              onClick={() => setSort(key)}
-            >
-              {label}
-            </button>
-          ))}
+          {Object.entries(SORT_LABELS).map(([key, label]) => {
+            if (key === 'relevance' && !ticker && !entity) return null
+            return (
+              <button
+                key={key}
+                className={`pf-sort-btn ${sort === key ? 'active' : ''}`}
+                onClick={() => setSort(key)}
+                disabled={key === 'relevance' && !ticker && !entity}
+              >
+                {label}
+              </button>
+            )
+          })}
         </div>
       </div>
 

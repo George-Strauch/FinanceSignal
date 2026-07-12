@@ -253,3 +253,97 @@ async def get_fetch_queue(
         "past_total": past_total,
         "ready_total": ready_total,
     }
+
+
+def _fmt_ner_row(r):
+    return {
+        "id": r["id"],
+        "source_type": r["source_type"],
+        "source_id": r["source_id"],
+        "subreddit": r.get("subreddit"),
+        "status": r["status"],
+        "enqueued_at": _ts(r.get("enqueued_at")),
+        "claimed_at": _ts(r.get("claimed_at")),
+        "processing_started_at": _ts(r.get("processing_started_at")),
+        "completed_at": _ts(r.get("completed_at")),
+        "entities_found": r.get("entities_found", 0),
+        "error": r.get("error"),
+        "log_id": r.get("log_id"),
+    }
+
+
+@router.get("/{job_id}/ner-queue")
+async def get_ner_queue(
+    job_id: str,
+    past_limit: int = 50,
+    past_offset: int = 0,
+    ready_limit: int = 100,
+    db: RedditDatabase = Depends(get_db),
+):
+    """NER queue state for the ner_extraction job."""
+    if job_id != "ner_extraction":
+        raise HTTPException(status_code=404, detail="NER queue only for ner_extraction")
+
+    ready = db.get_ready_ner(limit=ready_limit)
+    past = db.get_past_ner(limit=past_limit, offset=past_offset)
+    stats = db.ner_queue_stats()
+    past_total = db.count_past_ner()
+    ready_total = db.count_ready_ner()
+
+    return {
+        "ready": [_fmt_ner_row(r) for r in ready],
+        "past": [_fmt_ner_row(r) for r in past],
+        "stats": stats,
+        "ready_count": len(ready),
+        "past_count": len(past),
+        "past_total": past_total,
+        "ready_total": ready_total,
+    }
+
+
+def _fmt_relevance_row(r):
+    return {
+        "id": r["id"],
+        "source_type": r["source_type"],
+        "source_id": r["source_id"],
+        "entity_type": r["entity_type"],
+        "entity_ref": r["entity_ref"],
+        "entity_text": r.get("entity_text"),
+        "status": r["status"],
+        "enqueued_at": _ts(r.get("enqueued_at")),
+        "claimed_at": _ts(r.get("claimed_at")),
+        "processing_started_at": _ts(r.get("processing_started_at")),
+        "completed_at": _ts(r.get("completed_at")),
+        "score": r.get("score"),
+        "error": r.get("error"),
+        "log_id": r.get("log_id"),
+    }
+
+
+@router.get("/{job_id}/relevance-queue")
+async def get_relevance_queue(
+    job_id: str,
+    past_limit: int = 50,
+    past_offset: int = 0,
+    ready_limit: int = 100,
+    db: RedditDatabase = Depends(get_db),
+):
+    """Relevance queue state for the relevance_scoring job."""
+    if job_id not in ("relevance_scoring", "relevance_backfill"):
+        raise HTTPException(status_code=404, detail="Relevance queue only for relevance_scoring/relevance_backfill")
+
+    ready = db.get_ready_relevance(limit=ready_limit)
+    past = db.get_past_relevance(limit=past_limit, offset=past_offset)
+    stats = db.relevance_queue_stats()
+    past_total = db.count_past_relevance()
+    ready_total = db.count_ready_relevance()
+
+    return {
+        "ready": [_fmt_relevance_row(r) for r in ready],
+        "past": [_fmt_relevance_row(r) for r in past],
+        "stats": stats,
+        "ready_count": len(ready),
+        "past_count": len(past),
+        "past_total": past_total,
+        "ready_total": ready_total,
+    }

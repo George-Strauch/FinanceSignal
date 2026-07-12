@@ -97,6 +97,8 @@ export default function ProcessMonitor() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [fetchQueue, setFetchQueue] = useState(null)
+  const [nerQueue, setNerQueue] = useState(null)
+  const [relevanceQueue, setRelevanceQueue] = useState(null)
   const logRef = useRef(null)
   const prevSelectedRef = useRef(null)
   const [now, setNow] = useState(Date.now())
@@ -150,6 +152,8 @@ export default function ProcessMonitor() {
       setJobDetail(null)
       setLogs([])
       setFetchQueue(null)
+      setNerQueue(null)
+      setRelevanceQueue(null)
       return
     }
     fetchDetail(selectedJobId)
@@ -199,6 +203,86 @@ export default function ProcessMonitor() {
       loadMorePast()
     }
   }, [loadMorePast])
+
+  // ── NER queue ──────────────────────────────────────────────────
+  const [nerPastLimit, setNerPastLimit] = useState(50)
+  const nerPastLimitRef = useRef(50)
+  nerPastLimitRef.current = nerPastLimit
+
+  const fetchNerQueue = useCallback(async (jobId) => {
+    try {
+      const data = await get(`/processes/${jobId}/ner-queue?past_limit=${nerPastLimitRef.current}`)
+      setNerQueue(data)
+    } catch {
+      setNerQueue(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedJobId !== 'ner_extraction') {
+      setNerQueue(null)
+      setNerPastLimit(50)
+      return
+    }
+    fetchNerQueue(selectedJobId)
+    const id = setInterval(() => fetchNerQueue(selectedJobId), 3000)
+    return () => clearInterval(id)
+  }, [selectedJobId, fetchNerQueue])
+
+  const loadMoreNerPast = useCallback(() => {
+    if (!nerQueue) return
+    if (nerQueue.past.length >= nerQueue.past_total) return
+    setNerPastLimit((l) => l + 50)
+    fetchNerQueue('ner_extraction')
+  }, [nerQueue, fetchNerQueue])
+
+  const nerPastTableRef = useRef(null)
+  const handleNerPastScroll = useCallback((e) => {
+    const el = e.currentTarget
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
+      loadMoreNerPast()
+    }
+  }, [loadMoreNerPast])
+
+  // ── Relevance queue ────────────────────────────────────────────
+  const [relPastLimit, setRelPastLimit] = useState(50)
+  const relPastLimitRef = useRef(50)
+  relPastLimitRef.current = relPastLimit
+
+  const fetchRelevanceQueue = useCallback(async (jobId) => {
+    try {
+      const data = await get(`/processes/${jobId}/relevance-queue?past_limit=${relPastLimitRef.current}`)
+      setRelevanceQueue(data)
+    } catch {
+      setRelevanceQueue(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedJobId !== 'relevance_scoring' && selectedJobId !== 'relevance_backfill') {
+      setRelevanceQueue(null)
+      setRelPastLimit(50)
+      return
+    }
+    fetchRelevanceQueue(selectedJobId)
+    const id = setInterval(() => fetchRelevanceQueue(selectedJobId), 3000)
+    return () => clearInterval(id)
+  }, [selectedJobId, fetchRelevanceQueue])
+
+  const loadMoreRelPast = useCallback(() => {
+    if (!relevanceQueue) return
+    if (relevanceQueue.past.length >= relevanceQueue.past_total) return
+    setRelPastLimit((l) => l + 50)
+    fetchRelevanceQueue(selectedJobId)
+  }, [relevanceQueue, fetchRelevanceQueue, selectedJobId])
+
+  const relPastTableRef = useRef(null)
+  const handleRelPastScroll = useCallback((e) => {
+    const el = e.currentTarget
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
+      loadMoreRelPast()
+    }
+  }, [loadMoreRelPast])
 
   // Initialize param values and reset edit mode when selecting a job
   useEffect(() => {
@@ -869,6 +953,169 @@ export default function ProcessMonitor() {
     )
   }
 
+  const statusDotFn = (status) => {
+    if (status === 'success') return 'fq-dot-success'
+    if (status === 'failed') return 'fq-dot-failed'
+    if (status === 'in_progress') return 'fq-dot-progress'
+    return 'fq-dot-ready'
+  }
+
+  const renderNerQueue = () => {
+    if (!nerQueue) return null
+    const { ready, past, stats } = nerQueue
+
+    return (
+      <>
+        <div className="dash-card">
+          <h2>NER Queue</h2>
+          <div className="fq-stats-grid">
+            <div className="stat-item"><div className="stat-value">{stats.ready || 0}</div><div className="stat-label">Ready</div></div>
+            <div className="stat-item"><div className="stat-value">{stats.in_progress || 0}</div><div className="stat-label">In Progress</div></div>
+            <div className="stat-item"><div className="stat-value" style={{ color: 'rgb(46, 204, 113)' }}>{stats.success || 0}</div><div className="stat-label">Success</div></div>
+            <div className="stat-item"><div className="stat-value" style={{ color: 'rgb(239, 68, 68)' }}>{stats.failed || 0}</div><div className="stat-label">Failed</div></div>
+          </div>
+        </div>
+
+        <div className="dash-card">
+          <h2>Queue ({ready.length})</h2>
+          {ready.length === 0 ? (
+            <p className="fq-empty">Queue is empty — no sources pending NER.</p>
+          ) : (
+            <div className="fq-table-wrap">
+              <table className="fq-table">
+                <thead>
+                  <tr><th></th><th>Source</th><th>Subreddit</th><th>Status</th><th>Enqueued</th></tr>
+                </thead>
+                <tbody>
+                  {ready.map((r) => (
+                    <tr key={r.id}>
+                      <td><span className={`fq-status-dot ${statusDotFn(r.status)}`} /></td>
+                      <td className="fq-sub">{r.source_type}/{r.source_id.slice(0, 12)}</td>
+                      <td>{r.subreddit || '-'}</td>
+                      <td className="fq-status-cell">{r.status === 'in_progress' ? 'running…' : 'ready'}</td>
+                      <td className="fq-time">{formatTime(r.enqueued_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="dash-card">
+          <h2>Recent NER ({past.length}{nerQueue.past_total > past.length ? ` of ${nerQueue.past_total}` : ''})</h2>
+          {past.length === 0 ? (
+            <p className="fq-empty">No completed NER extractions yet.</p>
+          ) : (
+            <div className="fq-table-wrap" ref={nerPastTableRef} onScroll={handleNerPastScroll}>
+              <table className="fq-table">
+                <thead>
+                  <tr><th></th><th>Source</th><th>Subreddit</th><th>Entities</th><th>Status</th><th>Wait Time</th><th>Completed</th><th>Error</th></tr>
+                </thead>
+                <tbody>
+                  {past.map((r) => (
+                    <tr key={r.id} className={r.status === 'failed' ? 'fq-row-failed' : ''}>
+                      <td><span className={`fq-status-dot ${statusDotFn(r.status)}`} /></td>
+                      <td className="fq-sub">{r.source_type}/{r.source_id.slice(0, 12)}</td>
+                      <td>{r.subreddit || '-'}</td>
+                      <td>{r.entities_found ?? '-'}</td>
+                      <td className={`fq-status-cell fq-status-${r.status}`}>{r.status}</td>
+                      <td className="fq-time">{formatDuration(r.enqueued_at, r.completed_at)}</td>
+                      <td className="fq-time">{formatTime(r.completed_at)}</td>
+                      <td className="fq-error-cell" title={r.error || ''}>{r.error || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {past.length < nerQueue.past_total && (
+                <div className="fq-load-more">Scroll to load more ({nerQueue.past_total - past.length} remaining)</div>
+              )}
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
+  const renderRelevanceQueue = () => {
+    if (!relevanceQueue) return null
+    const { ready, past, stats } = relevanceQueue
+
+    return (
+      <>
+        <div className="dash-card">
+          <h2>Relevance Queue</h2>
+          <div className="fq-stats-grid">
+            <div className="stat-item"><div className="stat-value">{stats.ready || 0}</div><div className="stat-label">Ready</div></div>
+            <div className="stat-item"><div className="stat-value">{stats.in_progress || 0}</div><div className="stat-label">In Progress</div></div>
+            <div className="stat-item"><div className="stat-value" style={{ color: 'rgb(46, 204, 113)' }}>{stats.success || 0}</div><div className="stat-label">Success</div></div>
+            <div className="stat-item"><div className="stat-value" style={{ color: 'rgb(239, 68, 68)' }}>{stats.failed || 0}</div><div className="stat-label">Failed</div></div>
+          </div>
+        </div>
+
+        <div className="dash-card">
+          <h2>Queue ({ready.length})</h2>
+          {ready.length === 0 ? (
+            <p className="fq-empty">Queue is empty — no pairs pending scoring.</p>
+          ) : (
+            <div className="fq-table-wrap">
+              <table className="fq-table">
+                <thead>
+                  <tr><th></th><th>Source</th><th>Entity Type</th><th>Entity</th><th>Status</th><th>Enqueued</th></tr>
+                </thead>
+                <tbody>
+                  {ready.map((r) => (
+                    <tr key={r.id}>
+                      <td><span className={`fq-status-dot ${statusDotFn(r.status)}`} /></td>
+                      <td className="fq-sub">{r.source_type}/{r.source_id.slice(0, 12)}</td>
+                      <td><span className={`fq-type-badge fq-type-${r.entity_type}`}>{r.entity_type}</span></td>
+                      <td title={r.entity_text}>{r.entity_text}</td>
+                      <td className="fq-status-cell">{r.status === 'in_progress' ? 'running…' : 'ready'}</td>
+                      <td className="fq-time">{formatTime(r.enqueued_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="dash-card">
+          <h2>Recent Scores ({past.length}{relevanceQueue.past_total > past.length ? ` of ${relevanceQueue.past_total}` : ''})</h2>
+          {past.length === 0 ? (
+            <p className="fq-empty">No completed scores yet.</p>
+          ) : (
+            <div className="fq-table-wrap" ref={relPastTableRef} onScroll={handleRelPastScroll}>
+              <table className="fq-table">
+                <thead>
+                  <tr><th></th><th>Source</th><th>Entity Type</th><th>Entity</th><th>Score</th><th>Status</th><th>Wait Time</th><th>Completed</th><th>Error</th></tr>
+                </thead>
+                <tbody>
+                  {past.map((r) => (
+                    <tr key={r.id} className={r.status === 'failed' ? 'fq-row-failed' : ''}>
+                      <td><span className={`fq-status-dot ${statusDotFn(r.status)}`} /></td>
+                      <td className="fq-sub">{r.source_type}/{r.source_id.slice(0, 12)}</td>
+                      <td><span className={`fq-type-badge fq-type-${r.entity_type}`}>{r.entity_type}</span></td>
+                      <td title={r.entity_text}>{r.entity_text}</td>
+                      <td>{r.score != null ? r.score.toFixed(3) : '-'}</td>
+                      <td className={`fq-status-cell fq-status-${r.status}`}>{r.status}</td>
+                      <td className="fq-time">{formatDuration(r.enqueued_at, r.completed_at)}</td>
+                      <td className="fq-time">{formatTime(r.completed_at)}</td>
+                      <td className="fq-error-cell" title={r.error || ''}>{r.error || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {past.length < relevanceQueue.past_total && (
+                <div className="fq-load-more">Scroll to load more ({relevanceQueue.past_total - past.length} remaining)</div>
+              )}
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
   return (
     <div className="process-monitor">
       <div className="process-header">
@@ -915,6 +1162,8 @@ export default function ProcessMonitor() {
           {renderParamInputs()}
           {jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
           {renderFetchQueue()}
+          {renderNerQueue()}
+          {renderRelevanceQueue()}
 
           {/* Log Viewer */}
           <div className="dash-card">

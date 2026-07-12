@@ -395,6 +395,26 @@ class ProcessManager:
             state.log_buffer = proc.log_buffer
             return state
 
+        if proc.id == "relevance_scoring":
+            from app.relevance_queue import RelevanceScoringState
+            if proc.job_state is not None and isinstance(proc.job_state, RelevanceScoringState):
+                state = proc.job_state
+            else:
+                state = RelevanceScoringState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            return state
+
+        if proc.id == "relevance_backfill":
+            from app.relevance_backfill import RelevanceBackfillState
+            if proc.job_state is not None and isinstance(proc.job_state, RelevanceBackfillState):
+                state = proc.job_state
+            else:
+                state = RelevanceBackfillState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            return state
+
         if proc.id == "backfetch":
             from app.backfetch import BackfetchState, _parse_subreddits
             params = proc.current_params

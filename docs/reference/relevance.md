@@ -1,0 +1,232 @@
+# Cross-Encoder Relevance Scoring
+
+How FinanceSignal scores how specifically a post (or comment) discusses a given
+entity — ticker or named entity — using a cross-encoder reranker model.
+
+## Overview
+
+Traditional sort options (`date`, `score`, `comments`) surface noise:
+high-karma superusers posting broad-market commentary that name-drops a
+ticker. The relevance layer answers a different question: **"is this post
+*about* this entity's business, products, financials, or prospects?"**
+
+A cross-encoder — trained on `(query, document)` relevance from MS MARCO
+passage ranking — scores each `(source, entity)` pair. High engagement +
+low relevance gets demoted; high relevance + low engagement surfaces.
+
+## (query, document) Orientation
+
+The cross-encoder ranks **documents** by relevance to a **query**:
+
+| Role | Content | Example |
+|------|---------|---------|
+| **Query** (short) | Entity identifier | `"NVDA — NVIDIA Corporation"` or `"Palantir"` |
+| **Document** (longer) | Source text | `title + "\n" + selftext` (posts) or `body` (comments) |
+
+This is the correct orientation: the model scores "how relevant is this
+document (post) to this query (entity)?" — i.e., "how specifically does
+this post discuss this entity?"
+
+### Query string construction
+
+- **Ticker mentions**: `"$TICKER — <company name>"` if a company name is
+  known from `ticker_fundamentals_latest.name`, else `"$TICKER"`. Including
+  the name lets the cross-encoder match semantically (NVIDIA / datacenter /
+  GPUs) rather than just the symbol.
+- **Named entities**: the entity text itself (e.g., `"Palantir"`, `"OpenAI"`).
+
+### Document construction
+
+- **Posts**: `title + "\n" + selftext` (truncated to ~240 sub-tokens by the
+  model's tokenizer, leaving room for the query + special tokens).
+- **Comments**: the comment `body` (same truncation).
+
+### Word count threshold
+
+Only sources with **> 15 words** of text are scored. Shorter texts don't
+have enough signal for the cross-encoder to rank meaningfully. This check
+happens at enqueue time — short sources are silently skipped (never queued).
+
+## Model
+
+`cross-encoder/ms-marco-MiniLM-L-6-v2` — ~80 MB, 6-layer MiniLM, trained
+on MS MARCO passage ranking. CPU inference ~5 ms/pair, batched ~200
+pairs/sec on a single core.
+
+- Sigmoid-normalized to [0, 1] for display consistency
+- Pre-downloaded in the Docker image (no runtime download needed)
+- `DEFAULT_MODEL` constant in `src/sentinel/relevance.py` is stored as the
+  `model` column in `mention_relevance` — allows swapping models later
+  without schema changes
+
+## Tables
+
+### `mention_relevance` (results store)
+
+Authoritative relevance scores. One row per `(source, entity, model)`.
+
+```sql
+CREATE TABLE mention_relevance (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type     TEXT NOT NULL,       -- 'post' | 'comment'
+    source_id       TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,       -- 'ticker' | 'ner'
+    entity_ref      TEXT NOT NULL,       -- ticker symbol | str(named_entities.id)
+    entity_text     TEXT NOT NULL,       -- query string used
+    document_text   TEXT,                -- scored text (for debugging)
+    model           TEXT NOT NULL,
+    score           REAL NOT NULL,      -- 0.0–1.0 (sigmoid)
+    created_at      REAL NOT NULL,
+    UNIQUE(source_type, source_id, entity_type, entity_ref, model)
+);
+```
+
+- `entity_type = 'ticker'` → `entity_ref` is the ticker symbol (e.g., `"NVDA"`)
+- `entity_type = 'ner'` → `entity_ref` is the `named_entities.id` (as text)
+- The `UNIQUE` constraint allows multiple models side-by-side
+
+### `ner_queue` (work queue for NER extraction)
+
+Mirrors `fetch_queue` — drives NER extraction atomically.
+
+### `relevance_queue` (work queue for scoring)
+
+Each row = one `(source, entity)` pair pending scoring. The
+`document_text` is cached at enqueue time so the scorer doesn't need to
+re-fetch from the posts/comments tables.
+
+## Pipeline flow
+
+```
+Scraper detail fetch success
+  └─ enqueue NER for post + comments → ner_queue
+
+NER extraction (drains ner_queue)
+  ├─ spaCy entity extraction
+  ├─ save to named_entities
+  └─ for each entity (if text > 15 words):
+       └─ enqueue relevance → relevance_queue
+
+Ticker extraction (_process_tickers)
+  └─ for each ticker mention (if text > 15 words):
+       └─ enqueue relevance → relevance_queue
+       (query = "$TICKER — <company name>" from fundamentals)
+
+Relevance scoring (drains relevance_queue)
+  └─ cross-encoder score → mention_relevance
+```
+
+## Process Manager jobs
+
+| Job | Type | Schedule | Purpose |
+|-----|------|----------|---------|
+| `ner_extraction` | oneshot | **manual** | Drains ner_queue + auto-backfills unprocessed sources |
+| `relevance_scoring` | oneshot | manual | Drains relevance_queue, scores with cross-encoder |
+| `relevance_backfill` | oneshot | manual | Enqueues all unscored pairs into relevance_queue |
+
+### Typical workflow
+
+**For new posts** (live pipeline):
+1. Scraper fetches post detail → enqueues NER → NER job processes →
+   enqueues relevance → relevance scoring job processes → scores saved
+2. Run `ner_extraction` then `relevance_scoring` manually to process new work
+
+**For backfilling existing data**:
+1. Run `relevance_backfill` → finds all unscored `(source, entity)` pairs
+   from `ticker_mentions` + `named_entities` → enqueues into `relevance_queue`
+2. Run `relevance_scoring` → drains the queue, scores all pairs
+
+## Posts API
+
+### `sort=relevance`
+
+- Requires `ticker` or `entity` query param (returns 422 otherwise)
+- Joins `mention_relevance` and orders by `score DESC`
+- Ties broken by `created_utc DESC`, then `id` (stable pagination)
+- Each post summary includes `relevance_score` (the score for the filtered entity)
+
+### Relevance scores in post summaries
+
+Every post summary now includes:
+- `ticker_scores`: `{ticker: score}` dict (e.g., `{"NVDA": 0.92}`)
+- `entities_mentioned`: list of entity texts extracted from the post
+- `entity_scores`: `{entity_text: score}` dict
+- `relevance_score`: the score for the filtered entity (only when `sort=relevance`)
+
+## Frontend
+
+### PostCard tag chips
+
+Ticker and entity chips on post cards display the relevance score as a
+colored number (one decimal place, e.g., `0.9`):
+
+- **Green** (≥0.7): on-topic
+- **Amber** (0.4–0.7): mentions
+- **Red** (<0.4): tangential
+
+Entity chips link to the entity detail page (`/entities/:text`).
+
+### Relevance badge
+
+When `sort=relevance` is active, a colored badge appears on each post card
+showing the relevance percentage (e.g., "92% relevant").
+
+### PostFeed sort dropdown
+
+A "Relevance" sort button appears in PostFeed when a `ticker` or `entity`
+filter is active. It's disabled/hidden when no entity context is provided.
+
+## Code map
+
+| File | Role |
+|------|------|
+| `src/sentinel/relevance.py` | Cross-encoder wrapper — `score_pair`, `score_pairs`, `truncate_document` |
+| `src/sentinel/relevance_utils.py` | Query/document construction — `build_ticker_query`, `build_ner_query`, `should_score` |
+| `src/sentinel/db.py` | `mention_relevance`, `ner_queue`, `relevance_queue` schemas + methods |
+| `app/relevance_queue.py` | Relevance scoring job — drains `relevance_queue` |
+| `app/relevance_backfill.py` | Backfill job — enqueues unscored pairs |
+| `app/ner_processor.py` | NER job — drains `ner_queue`, enqueues relevance on success |
+| `app/scraper.py` | Scraper hook — enqueues NER on detail success; ticker hook enqueues relevance |
+| `app/routers/posts.py` | `sort=relevance`, `ticker_scores`/`entity_scores` in payload |
+| `app/routers/processes.py` | `/ner-queue` and `/relevance-queue` API endpoints |
+| `frontend/src/components/PostCard.jsx` | Tag chips with scores, relevance badge |
+| `frontend/src/components/PostFeed.jsx` | Relevance sort option |
+
+## Known limitations / gaps
+
+1. **Comment relevance not surfaced in post feeds**: We score both posts
+   and comments for relevance (per the pipeline), but the post feeds on
+   ticker/entity pages only show posts (comments excluded for noise
+   reduction). Comment scores are stored in `mention_relevance` and
+   available for future use (e.g., a comment-level relevance view).
+
+2. **Scores are low for casual mentions**: The MS MARCO cross-encoder
+   produces low scores (0.01–0.1) for posts that merely mention an entity
+   in passing. Scores ≥0.4 are genuinely on-topic. This is by design —
+   the model distinguishes topical discussion from name-dropping.
+
+3. **NER processes one source at a time** (not batched via `nlp.pipe`).
+   This is simpler for the queue architecture but slower for bulk backfill.
+   Optimization: batch-claim N rows, run `nlp.pipe`, then mark all. Flagged
+   for future optimization if backfill throughput becomes a bottleneck.
+
+4. **Company name lookup is per-ticker** in the ticker relevance enqueue
+   path. If fundamentals aren't fetched yet, the query falls back to
+   symbol-only (`"$NVDA"`). The fundamentals fetcher runs on a 30-min
+   schedule, so newly mentioned tickers may have no company name until the
+   next fundamentals cycle.
+
+5. **Docker image size**: `sentence-transformers` + `torch` (CPU) adds
+   ~800MB to the image. The model is pre-downloaded during build to avoid
+   runtime downloads.
+
+## Swapping models
+
+To use a different cross-encoder (e.g., `bge-reranker-v2-m3`):
+
+1. Update `DEFAULT_MODEL` in `src/sentinel/relevance.py`
+2. Update the pre-download command in `docker/Dockerfile`
+3. Run `relevance_backfill` + `relevance_scoring` to score all pairs with
+   the new model
+4. The `UNIQUE(source_type, source_id, entity_type, entity_ref, model)`
+   constraint allows both models' scores to coexist — no migration needed

@@ -16,6 +16,7 @@ class SortOrder(str, Enum):
     date = "date"
     score = "score"
     comments = "comments"
+    relevance = "relevance"
 
 
 SORT_COLUMNS = {
@@ -25,7 +26,9 @@ SORT_COLUMNS = {
 }
 
 
-def _post_summary(row, tickers: list[str]) -> dict:
+def _post_summary(row, tickers: list[str], ticker_scores: dict,
+                  entities: list[str], entity_scores: dict,
+                  relevance_score: float | None) -> dict:
     selftext = row["selftext"] or ""
     preview = (selftext[:200] + "...") if len(selftext) > 200 else selftext
     upvote_ratio = row["upvote_ratio"]
@@ -41,6 +44,10 @@ def _post_summary(row, tickers: list[str]) -> dict:
         "created_utc": row["created_utc"],
         "sentiment_label": post_sentiment_label(row["score"], upvote_ratio),
         "tickers_mentioned": tickers,
+        "ticker_scores": ticker_scores,
+        "entities_mentioned": entities,
+        "entity_scores": entity_scores,
+        "relevance_score": relevance_score,
         "reddit_url": f"https://reddit.com/r/{row['subreddit']}/comments/{row['id']}",
     }
 
@@ -61,9 +68,14 @@ def list_posts(
     if not ticker and not subreddit and not entity and not author:
         raise HTTPException(status_code=422, detail="At least one of 'ticker', 'subreddit', 'entity', or 'author' is required.")
 
+    if sort == SortOrder.relevance and not ticker and not entity:
+        raise HTTPException(status_code=422, detail="sort=relevance requires a 'ticker' or 'entity' filter — relevance is per-(post, entity).")
+
     where_clauses: list[str] = []
     params: list = []
     join = ""
+    relevance_join = ""
+    relevance_score_col = "NULL AS relevance_score"
 
     if ticker:
         join = "JOIN ticker_mentions tm ON tm.source_type = 'post' AND tm.source_id = p.id"
@@ -91,12 +103,32 @@ def list_posts(
         params.append(date_to)
 
     where = "WHERE " + " AND ".join(where_clauses)
-    order = SORT_COLUMNS[sort.value]
+
+    if sort == SortOrder.relevance:
+        if ticker:
+            relevance_join = (
+                "JOIN mention_relevance mr ON mr.source_type = 'post' "
+                "AND mr.source_id = p.id AND mr.entity_type = 'ticker' "
+                "AND mr.entity_ref = ?"
+            )
+            params.insert(0, ticker.upper())
+            order = "mr.score DESC, p.created_utc DESC, p.id"
+            relevance_score_col = "mr.score AS relevance_score"
+        else:
+            # entity filter — join through named_entities to mention_relevance
+            relevance_join = (
+                "JOIN mention_relevance mr ON mr.source_type = 'post' "
+                "AND mr.source_id = p.id AND mr.entity_type = 'ner' "
+                "AND mr.entity_ref = CAST(ne.id AS TEXT)"
+            )
+            order = "mr.score DESC, p.created_utc DESC, p.id"
+            relevance_score_col = "mr.score AS relevance_score"
+    else:
+        order = SORT_COLUMNS[sort.value]
 
     # Count total
-    total = db.conn.execute(
-        f"SELECT COUNT(DISTINCT p.id) FROM posts p {join} {where}", params
-    ).fetchone()[0]
+    count_sql = f"SELECT COUNT(DISTINCT p.id) FROM posts p {join} {relevance_join} {where}"
+    total = db.conn.execute(count_sql, params).fetchone()[0]
 
     total_pages = max(1, math.ceil(total / per_page))
     offset = (page - 1) * per_page
@@ -105,8 +137,9 @@ def list_posts(
     rows = db.conn.execute(
         f"""
         SELECT DISTINCT p.id, p.title, p.selftext, p.author, p.subreddit,
-               p.score, p.upvote_ratio, p.num_comments, p.created_utc
-        FROM posts p {join} {where}
+               p.score, p.upvote_ratio, p.num_comments, p.created_utc,
+               {relevance_score_col}
+        FROM posts p {join} {relevance_join} {where}
         ORDER BY {order}
         LIMIT ? OFFSET ?
         """,
@@ -129,8 +162,77 @@ def list_posts(
         for tr in ticker_rows:
             ticker_map[tr["source_id"]].append(tr["ticker"])
 
+    # Batch-fetch named entities for all posts in this page
+    entity_map: dict[str, list[str]] = {pid: [] for pid in post_ids}
+    entity_label_map: dict[str, dict[str, str]] = {pid: {} for pid in post_ids}
+    if post_ids:
+        placeholders = ",".join("?" * len(post_ids))
+        entity_rows = db.conn.execute(
+            f"""
+            SELECT DISTINCT source_id, entity_text, entity_label
+            FROM named_entities
+            WHERE source_type = 'post' AND source_id IN ({placeholders})
+            """,
+            post_ids,
+        ).fetchall()
+        for er in entity_rows:
+            if er["entity_text"] not in entity_map[er["source_id"]]:
+                entity_map[er["source_id"]].append(er["entity_text"])
+                entity_label_map[er["source_id"]][er["entity_text"]] = er["entity_label"]
+
+    # Batch-fetch relevance scores for all posts in this page
+    relevance_batch = db.get_relevance_scores_batch("post", post_ids)
+    ticker_scores_map: dict[str, dict[str, float]] = {pid: {} for pid in post_ids}
+    entity_scores_map: dict[str, dict[str, float]] = {pid: {} for pid in post_ids}
+
+    # Collect NER entity_ref ids for batch text lookup
+    ner_refs: set[int] = set()
+    for scores in relevance_batch.values():
+        for s in scores:
+            if s["entity_type"] == "ner":
+                try:
+                    ner_refs.add(int(s["entity_ref"]))
+                except (ValueError, TypeError):
+                    pass
+
+    # Batch lookup: named_entities.id → entity_text
+    ref_to_text: dict[int, str] = {}
+    if ner_refs:
+        placeholders = ",".join("?" * len(ner_refs))
+        ne_rows = db.conn.execute(
+            f"SELECT DISTINCT id, entity_text FROM named_entities WHERE id IN ({placeholders})",
+            list(ner_refs),
+        ).fetchall()
+        ref_to_text = {r["id"]: r["entity_text"] for r in ne_rows}
+
+    for pid, scores in relevance_batch.items():
+        for s in scores:
+            if s["entity_type"] == "ticker":
+                ticker_scores_map[pid][s["entity_ref"]] = s["score"]
+            elif s["entity_type"] == "ner":
+                try:
+                    ne_id = int(s["entity_ref"])
+                    text = ref_to_text.get(ne_id)
+                    if text:
+                        # Keep the highest score per entity_text
+                        prev = entity_scores_map[pid].get(text)
+                        if prev is None or s["score"] > prev:
+                            entity_scores_map[pid][text] = s["score"]
+                except (ValueError, TypeError):
+                    pass
+
     return {
-        "posts": [_post_summary(r, ticker_map.get(r["id"], [])) for r in rows],
+        "posts": [
+            _post_summary(
+                r,
+                ticker_map.get(r["id"], []),
+                ticker_scores_map.get(r["id"], {}),
+                entity_map.get(r["id"], []),
+                entity_scores_map.get(r["id"], {}),
+                r["relevance_score"],
+            )
+            for r in rows
+        ],
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -166,8 +268,17 @@ def get_post(
         ).fetchall()
     ]
 
+    entities = [
+        {"text": r["entity_text"], "label": r["entity_label"]}
+        for r in db.conn.execute(
+            "SELECT DISTINCT entity_text, entity_label FROM named_entities WHERE source_type = 'post' AND source_id = ?",
+            (post_id,),
+        ).fetchall()
+    ]
+
     return {
         **dict(row),
         "tickers_mentioned": tickers,
+        "entities_mentioned": entities,
         "reddit_url": f"https://reddit.com/r/{row['subreddit']}/comments/{row['id']}",
     }

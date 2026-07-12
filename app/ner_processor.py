@@ -1,4 +1,8 @@
-"""NER extraction background task — extract named entities from posts and comments using spaCy."""
+"""NER extraction process — drains ner_queue, extracts entities, enqueues relevance.
+
+On each NER extraction success, every extracted entity is enqueued into the
+relevance_queue for cross-encoder scoring (only if the source text > 15 words).
+"""
 
 import asyncio
 import logging
@@ -6,15 +10,19 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from app.db_logging import log_event
 from sentinel.db import RedditDatabase
+from sentinel.relevance_utils import (
+    build_post_document, build_comment_document,
+    build_ner_query, should_score,
+)
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 200
-LOG_EVERY = 200  # Log progress every N items processed
+BATCH_SIZE = 50  # spaCy pipe batch size
+LOG_EVERY = 200
 USEFUL_LABELS = {"PERSON", "ORG", "GPE", "MONEY", "PRODUCT", "EVENT", "NORP", "FAC", "WORK_OF_ART", "LAW"}
 
-# Module-level singleton — loaded lazily
 _nlp = None
 
 
@@ -28,9 +36,9 @@ def _get_nlp():
 
 @dataclass
 class NERState:
-    posts_processed: int = 0
-    comments_processed: int = 0
+    sources_processed: int = 0
     entities_found: int = 0
+    relevance_enqueued: int = 0
     errors: int = 0
     current_phase: str = "idle"
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
@@ -38,14 +46,15 @@ class NERState:
 
 
 async def run_ner_extraction(state: NERState):
-    """Async entry point — loads model, processes posts then comments."""
+    """Async entry point — loads model, drains ner_queue."""
     state.current_phase = "loading_model"
     start_time = time.time()
     logger.info("NER extraction starting")
 
-    # Log backlog size before loading model
-    backlog = await asyncio.to_thread(_log_backlog)
-    unprocessed_posts, unprocessed_comments = backlog
+    # Check backlog and auto-enqueue any unprocessed sources
+    enqueued = await asyncio.to_thread(_backfill_unprocessed)
+    if enqueued > 0:
+        logger.info("Auto-enqueued %d unprocessed sources into ner_queue", enqueued)
 
     logger.info("Loading spaCy model (this may take a moment)...")
     load_start = time.time()
@@ -55,178 +64,180 @@ async def run_ner_extraction(state: NERState):
     if state._stop_event.is_set():
         return
 
-    if unprocessed_posts > 0:
-        state.current_phase = "processing_posts"
-        logger.info("Processing posts (%d unprocessed)...", unprocessed_posts)
-        await asyncio.to_thread(_process_ner_posts, state)
-    else:
-        logger.info("No unprocessed posts, skipping")
-
-    if state._stop_event.is_set():
-        state.current_phase = "stopped"
-        logger.info("Stopped by user after processing %d posts", state.posts_processed)
-        return
-
-    if unprocessed_comments > 0:
-        state.current_phase = "processing_comments"
-        logger.info("Processing comments (%d unprocessed)...", unprocessed_comments)
-        await asyncio.to_thread(_process_ner_comments, state)
-    else:
-        logger.info("No unprocessed comments, skipping")
+    state.current_phase = "processing"
+    await asyncio.to_thread(_drain_ner_queue, state)
 
     elapsed = time.time() - start_time
     state.current_phase = "complete"
     logger.info(
-        "NER extraction complete in %.1fs — %d posts, %d comments, %d entities, %d errors",
-        elapsed, state.posts_processed, state.comments_processed, state.entities_found, state.errors,
+        "NER extraction complete in %.1fs — %d sources, %d entities, %d relevance enqueued, %d errors",
+        elapsed, state.sources_processed, state.entities_found,
+        state.relevance_enqueued, state.errors,
     )
 
 
-def _log_backlog() -> tuple[int, int]:
-    """Count unprocessed posts and comments, log the backlog."""
+def _backfill_unprocessed() -> int:
+    """Find posts/comments not in ner_processed_sources and enqueue them."""
+    count = 0
     with RedditDatabase() as db:
-        total_posts = db.conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
-        processed_posts = db.conn.execute(
-            "SELECT COUNT(*) FROM ner_processed_sources WHERE source_type = 'post'"
-        ).fetchone()[0]
-        total_comments = db.conn.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
-        processed_comments = db.conn.execute(
-            "SELECT COUNT(*) FROM ner_processed_sources WHERE source_type = 'comment'"
-        ).fetchone()[0]
-    unprocessed_posts = total_posts - processed_posts
-    unprocessed_comments = total_comments - processed_comments
-    logger.info(
-        "Backlog: %d/%d posts, %d/%d comments unprocessed",
-        unprocessed_posts, total_posts, unprocessed_comments, total_comments,
-    )
-    return unprocessed_posts, unprocessed_comments
+        posts = db.get_ner_unprocessed_posts(limit=100000)
+        for post in posts:
+            db.enqueue_ner(
+                source_type="post",
+                source_id=post["id"],
+                subreddit=post.get("subreddit"),
+                created_utc=post.get("created_utc"),
+            )
+            count += 1
+        comments = db.get_ner_unprocessed_comments(limit=100000)
+        for comment in comments:
+            db.enqueue_ner(
+                source_type="comment",
+                source_id=comment["id"],
+                subreddit=comment.get("subreddit"),
+                created_utc=comment.get("created_utc"),
+            )
+            count += 1
+    return count
 
 
-def _extract_entities_batch(texts: list[str], sources: list[dict]) -> list[dict]:
-    """Run NER on a batch of texts, return entity dicts."""
+def _drain_ner_queue(state: NERState):
+    """Claim and process ner_queue rows until empty or stopped."""
+    last_logged = 0
+    with RedditDatabase() as db:
+        while not state._stop_event.is_set():
+            row = db.claim_next_ner()
+            if row is None:
+                break
+
+            db.mark_ner_started(row["id"])
+            source_type = row["source_type"]
+            source_id = row["source_id"]
+
+            try:
+                # Fetch the source text from the DB
+                if source_type == "post":
+                    post = db.conn.execute(
+                        "SELECT title, selftext, subreddit, created_utc FROM posts WHERE id = ?",
+                        (source_id,)
+                    ).fetchone()
+                    if not post:
+                        db.mark_ner_failed(row["id"], "post not found")
+                        state.errors += 1
+                        continue
+                    text = build_post_document(post["title"], post["selftext"])
+                    subreddit = post["subreddit"]
+                    created_utc = post["created_utc"]
+                else:
+                    comment = db.conn.execute(
+                        "SELECT body, post_id FROM comments WHERE id = ?",
+                        (source_id,)
+                    ).fetchone()
+                    if not comment:
+                        db.mark_ner_failed(row["id"], "comment not found")
+                        state.errors += 1
+                        continue
+                    text = build_comment_document(comment["body"])
+                    # Get subreddit from parent post
+                    parent = db.conn.execute(
+                        "SELECT subreddit, created_utc FROM posts WHERE id = ?",
+                        (comment["post_id"],)
+                    ).fetchone()
+                    subreddit = parent["subreddit"] if parent else None
+                    created_utc = parent["created_utc"] if parent else None
+
+                # Run NER
+                entities = _extract_entities(text, source_type, source_id,
+                                             subreddit, created_utc)
+
+                if entities:
+                    db.save_named_entities(entities)
+                    db.conn.commit()
+                    state.entities_found += len(entities)
+
+                    # Enqueue relevance work for each extracted entity
+                    if should_score(text):
+                        relevance_count = _enqueue_relevance_for_entities(
+                            db, source_type, source_id, entities, text
+                        )
+                        state.relevance_enqueued += relevance_count
+
+                db.mark_ner_processed(source_type, source_id)
+                db.mark_ner_success(row["id"], entities_found=len(entities))
+                db.commit()
+                state.sources_processed += 1
+
+            except Exception as exc:
+                logger.exception("NER failed for %s %s", source_type, source_id)
+                state.errors += 1
+                log_id = log_event("ner_extraction", "ERROR",
+                                   f"NER failed for {source_type} {source_id}: {exc}")
+                db.mark_ner_failed(row["id"], str(exc), log_id=log_id)
+
+            if state.sources_processed - last_logged >= LOG_EVERY:
+                logger.info(
+                    "NER: %d sources processed (+%d entities, +%d relevance enqueued) | total: %d entities, %d errors",
+                    state.sources_processed, len(entities), state.relevance_enqueued,
+                    state.entities_found, state.errors,
+                )
+                last_logged = state.sources_processed
+
+
+def _extract_entities(text: str, source_type: str, source_id: str,
+                      subreddit: str | None, created_utc: float | None) -> list[dict]:
+    """Run spaCy NER on a single text, return entity dicts."""
     nlp = _get_nlp()
+    doc = nlp(text)
+    seen = set()
     entities = []
-    for doc, source in zip(nlp.pipe(texts, batch_size=50), sources):
-        seen = set()
-        for ent in doc.ents:
-            if ent.label_ not in USEFUL_LABELS:
-                continue
-            # Normalize: strip whitespace, skip very short or very long
-            text = ent.text.strip()
-            if len(text) < 2 or len(text) > 200:
-                continue
-            key = (text, ent.label_)
-            if key in seen:
-                continue
-            seen.add(key)
-            entities.append({
-                "source_type": source["source_type"],
-                "source_id": source["source_id"],
-                "entity_text": text,
-                "entity_label": ent.label_,
-                "subreddit": source.get("subreddit"),
-                "created_utc": source.get("created_utc"),
-            })
+    for ent in doc.ents:
+        if ent.label_ not in USEFUL_LABELS:
+            continue
+        ent_text = ent.text.strip()
+        if len(ent_text) < 2 or len(ent_text) > 200:
+            continue
+        key = (ent_text, ent.label_)
+        if key in seen:
+            continue
+        seen.add(key)
+        entities.append({
+            "source_type": source_type,
+            "source_id": source_id,
+            "entity_text": ent_text,
+            "entity_label": ent.label_,
+            "subreddit": subreddit,
+            "created_utc": created_utc,
+        })
     return entities
 
 
-def _process_ner_posts(state: NERState):
-    """Process unprocessed posts in batches."""
-    last_logged = 0
-    with RedditDatabase() as db:
-        while not state._stop_event.is_set():
-            posts = db.get_ner_unprocessed_posts(limit=BATCH_SIZE)
-            if not posts:
-                break
+def _enqueue_relevance_for_entities(db: RedditDatabase, source_type: str,
+                                     source_id: str, entities: list[dict],
+                                     document_text: str) -> int:
+    """Enqueue relevance scoring for each extracted entity.
 
-            batch_start = time.time()
-            texts = []
-            sources = []
-            for post in posts:
-                title = post.get("title") or ""
-                selftext = post.get("selftext") or ""
-                text = f"{title}\n{selftext}".strip()
-                texts.append(text)
-                sources.append({
-                    "source_type": "post",
-                    "source_id": post["id"],
-                    "subreddit": post.get("subreddit"),
-                    "created_utc": post.get("created_utc"),
-                })
-
-            batch_entities = 0
-            try:
-                entities = _extract_entities_batch(texts, sources)
-                if entities:
-                    db.save_named_entities(entities)
-                    batch_entities = len(entities)
-                    state.entities_found += batch_entities
-                for post in posts:
-                    db.mark_ner_processed("post", post["id"])
-                db.commit()
-                state.posts_processed += len(posts)
-            except Exception:
-                logger.exception("Error processing post batch")
-                state.errors += 1
-                for post in posts:
-                    db.mark_ner_processed("post", post["id"])
-                db.commit()
-                state.posts_processed += len(posts)
-
-            if state.posts_processed - last_logged >= LOG_EVERY:
-                elapsed = time.time() - batch_start
-                logger.info(
-                    "Posts: %d processed (+%d entities this batch, %.1fs) | total entities: %d",
-                    state.posts_processed, batch_entities, elapsed, state.entities_found,
-                )
-                last_logged = state.posts_processed
-
-
-def _process_ner_comments(state: NERState):
-    """Process unprocessed comments in batches."""
-    last_logged = 0
-    with RedditDatabase() as db:
-        while not state._stop_event.is_set():
-            comments = db.get_ner_unprocessed_comments(limit=BATCH_SIZE)
-            if not comments:
-                break
-
-            batch_start = time.time()
-            texts = []
-            sources = []
-            for comment in comments:
-                text = (comment.get("body") or "").strip()
-                texts.append(text)
-                sources.append({
-                    "source_type": "comment",
-                    "source_id": comment["id"],
-                    "subreddit": comment.get("subreddit"),
-                    "created_utc": comment.get("created_utc"),
-                })
-
-            batch_entities = 0
-            try:
-                entities = _extract_entities_batch(texts, sources)
-                if entities:
-                    db.save_named_entities(entities)
-                    batch_entities = len(entities)
-                    state.entities_found += batch_entities
-                for comment in comments:
-                    db.mark_ner_processed("comment", comment["id"])
-                db.commit()
-                state.comments_processed += len(comments)
-            except Exception:
-                logger.exception("Error processing comment batch")
-                state.errors += 1
-                for comment in comments:
-                    db.mark_ner_processed("comment", comment["id"])
-                db.commit()
-                state.comments_processed += len(comments)
-
-            if state.comments_processed - last_logged >= LOG_EVERY:
-                elapsed = time.time() - batch_start
-                logger.info(
-                    "Comments: %d processed (+%d entities this batch, %.1fs) | total entities: %d",
-                    state.comments_processed, batch_entities, elapsed, state.entities_found,
-                )
-                last_logged = state.comments_processed
+    Uses the named_entities row id (assigned by save_named_entities) as
+    entity_ref. We look up the ids after saving.
+    """
+    count = 0
+    # Look up the named_entities ids for the entities we just saved
+    for e in entities:
+        row = db.conn.execute("""
+            SELECT id FROM named_entities
+            WHERE source_type = ? AND source_id = ? AND entity_text = ? AND entity_label = ?
+        """, (e["source_type"], e["source_id"], e["entity_text"], e["entity_label"])).fetchone()
+        if not row:
+            continue
+        ne_id = str(row["id"])
+        query = build_ner_query(e["entity_text"])
+        result = db.enqueue_relevance(
+            source_type=source_type,
+            source_id=source_id,
+            entity_type="ner",
+            entity_ref=ne_id,
+            entity_text=query,
+            document_text=document_text,
+        )
+        if result is not None:
+            count += 1
+    return count

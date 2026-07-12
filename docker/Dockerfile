@@ -20,6 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy NER model
 RUN python -m spacy download en_core_web_lg
 
+# Pre-download cross-encoder model for relevance scoring
+RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+
 # Copy application source
 COPY src/ src/
 COPY app/ app/

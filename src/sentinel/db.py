@@ -17,6 +17,7 @@ class RedditDatabase:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA busy_timeout=10000")
         self._initialize_schema()
         return self
 
@@ -530,6 +531,66 @@ class RedditDatabase:
             CREATE INDEX IF NOT EXISTS idx_fq_subreddit ON fetch_queue(subreddit);
             CREATE INDEX IF NOT EXISTS idx_fq_cycle ON fetch_queue(cycle_id);
             CREATE INDEX IF NOT EXISTS idx_fq_ready ON fetch_queue(status, enqueued_at);
+
+            CREATE TABLE IF NOT EXISTS ner_queue (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type     TEXT NOT NULL,
+                source_id       TEXT NOT NULL,
+                subreddit       TEXT,
+                created_utc     REAL,
+                status          TEXT NOT NULL DEFAULT 'ready',
+                enqueued_at     REAL NOT NULL,
+                claimed_at      REAL,
+                processing_started_at REAL,
+                completed_at    REAL,
+                entities_found  INTEGER DEFAULT 0,
+                error           TEXT,
+                log_id          INTEGER,
+                UNIQUE(source_type, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_nq_status ON ner_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_nq_ready ON ner_queue(status, enqueued_at);
+            CREATE INDEX IF NOT EXISTS idx_nq_source ON ner_queue(source_type, source_id);
+
+            CREATE TABLE IF NOT EXISTS relevance_queue (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type     TEXT NOT NULL,
+                source_id       TEXT NOT NULL,
+                entity_type     TEXT NOT NULL,
+                entity_ref      TEXT NOT NULL,
+                entity_text     TEXT NOT NULL,
+                document_text   TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'ready',
+                enqueued_at     REAL NOT NULL,
+                claimed_at      REAL,
+                processing_started_at REAL,
+                completed_at    REAL,
+                score           REAL,
+                error           TEXT,
+                log_id          INTEGER,
+                UNIQUE(source_type, source_id, entity_type, entity_ref)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rq_status ON relevance_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_rq_ready ON relevance_queue(status, enqueued_at);
+            CREATE INDEX IF NOT EXISTS idx_rq_source ON relevance_queue(source_type, source_id);
+            CREATE INDEX IF NOT EXISTS idx_rq_entity ON relevance_queue(entity_type, entity_ref);
+
+            CREATE TABLE IF NOT EXISTS mention_relevance (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type     TEXT NOT NULL,
+                source_id       TEXT NOT NULL,
+                entity_type     TEXT NOT NULL,
+                entity_ref      TEXT NOT NULL,
+                entity_text     TEXT NOT NULL,
+                document_text   TEXT,
+                model           TEXT NOT NULL,
+                score           REAL NOT NULL,
+                created_at      REAL NOT NULL,
+                UNIQUE(source_type, source_id, entity_type, entity_ref, model)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mr_source ON mention_relevance(source_type, source_id);
+            CREATE INDEX IF NOT EXISTS idx_mr_entity ON mention_relevance(entity_type, entity_ref, score DESC);
+            CREATE INDEX IF NOT EXISTS idx_mr_post_score ON mention_relevance(source_type, source_id, entity_type, entity_ref);
         """)
         self.conn.commit()
 
@@ -898,6 +959,311 @@ class RedditDatabase:
             GROUP BY status
         """).fetchall()
         return {r["status"]: r["cnt"] for r in rows}
+
+    # ── NER queue ──────────────────────────────────────────────────────
+
+    def enqueue_ner(self, source_type: str, source_id: str,
+                    subreddit: str | None = None,
+                    created_utc: float | None = None) -> int | None:
+        """Enqueue a source for NER extraction. Returns row id, or None if
+        already enqueued (UNIQUE constraint)."""
+        try:
+            cur = self.conn.execute("""
+                INSERT INTO ner_queue
+                    (source_type, source_id, subreddit, created_utc,
+                     status, enqueued_at)
+                VALUES (?, ?, ?, ?, 'ready', ?)
+            """, (source_type, source_id, subreddit, created_utc, time.time()))
+            self.conn.commit()
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+    def claim_next_ner(self) -> dict | None:
+        """Atomically claim the oldest 'ready' NER row."""
+        cur = self.conn.execute("""
+            UPDATE ner_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id = (
+                SELECT id FROM ner_queue
+                WHERE status = 'ready'
+                ORDER BY enqueued_at ASC
+                LIMIT 1
+            )
+            RETURNING id
+        """, (time.time(),))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        full = self.conn.execute(
+            "SELECT * FROM ner_queue WHERE id = ?", (row[0],)
+        ).fetchone()
+        self.conn.commit()
+        return dict(full) if full else None
+
+    def mark_ner_started(self, queue_id: int):
+        self.conn.execute(
+            "UPDATE ner_queue SET processing_started_at = ? WHERE id = ?",
+            (time.time(), queue_id)
+        )
+        self.conn.commit()
+
+    def mark_ner_success(self, queue_id: int, entities_found: int,
+                         log_id: int | None = None):
+        self.conn.execute("""
+            UPDATE ner_queue
+            SET status = 'success', completed_at = ?,
+                entities_found = ?, log_id = ?
+            WHERE id = ?
+        """, (time.time(), entities_found, log_id, queue_id))
+        self.conn.commit()
+
+    def mark_ner_failed(self, queue_id: int, error: str,
+                        log_id: int | None = None):
+        self.conn.execute("""
+            UPDATE ner_queue
+            SET status = 'failed', completed_at = ?,
+                error = ?, log_id = ?
+            WHERE id = ?
+        """, (time.time(), error, log_id, queue_id))
+        self.conn.commit()
+
+    def get_ready_ner(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM ner_queue
+            WHERE status IN ('ready', 'in_progress')
+            ORDER BY enqueued_at ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_past_ner(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM ner_queue
+            WHERE status IN ('success', 'failed')
+            ORDER BY completed_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_ready_ner(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM ner_queue WHERE status IN ('ready', 'in_progress')"
+        ).fetchone()[0]
+
+    def count_past_ner(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM ner_queue WHERE status IN ('success', 'failed')"
+        ).fetchone()[0]
+
+    def ner_queue_stats(self) -> dict:
+        rows = self.conn.execute("""
+            SELECT status, COUNT(*) AS cnt
+            FROM ner_queue
+            GROUP BY status
+        """).fetchall()
+        return {r["status"]: r["cnt"] for r in rows}
+
+    # ── Relevance queue ────────────────────────────────────────────────
+
+    def enqueue_relevance(self, source_type: str, source_id: str,
+                          entity_type: str, entity_ref: str,
+                          entity_text: str, document_text: str) -> int | None:
+        """Enqueue a (source, entity) pair for relevance scoring. Returns
+        row id, or None if already enqueued."""
+        try:
+            cur = self.conn.execute("""
+                INSERT INTO relevance_queue
+                    (source_type, source_id, entity_type, entity_ref,
+                     entity_text, document_text, status, enqueued_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'ready', ?)
+            """, (source_type, source_id, entity_type, entity_ref,
+                  entity_text, document_text, time.time()))
+            self.conn.commit()
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+    def claim_next_relevance(self) -> dict | None:
+        """Atomically claim the oldest 'ready' relevance row."""
+        cur = self.conn.execute("""
+            UPDATE relevance_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id = (
+                SELECT id FROM relevance_queue
+                WHERE status = 'ready'
+                ORDER BY enqueued_at ASC
+                LIMIT 1
+            )
+            RETURNING id
+        """, (time.time(),))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        full = self.conn.execute(
+            "SELECT * FROM relevance_queue WHERE id = ?", (row[0],)
+        ).fetchone()
+        self.conn.commit()
+        return dict(full) if full else None
+
+    def mark_relevance_started(self, queue_id: int):
+        self.conn.execute(
+            "UPDATE relevance_queue SET processing_started_at = ? WHERE id = ?",
+            (time.time(), queue_id)
+        )
+        self.conn.commit()
+
+    def mark_relevance_success(self, queue_id: int, score: float,
+                               log_id: int | None = None):
+        self.conn.execute("""
+            UPDATE relevance_queue
+            SET status = 'success', completed_at = ?,
+                score = ?, log_id = ?
+            WHERE id = ?
+        """, (time.time(), score, log_id, queue_id))
+        self.conn.commit()
+
+    def mark_relevance_failed(self, queue_id: int, error: str,
+                              log_id: int | None = None):
+        self.conn.execute("""
+            UPDATE relevance_queue
+            SET status = 'failed', completed_at = ?,
+                error = ?, log_id = ?
+            WHERE id = ?
+        """, (time.time(), error, log_id, queue_id))
+        self.conn.commit()
+
+    def get_ready_relevance(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM relevance_queue
+            WHERE status IN ('ready', 'in_progress')
+            ORDER BY enqueued_at ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_past_relevance(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM relevance_queue
+            WHERE status IN ('success', 'failed')
+            ORDER BY completed_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_ready_relevance(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM relevance_queue WHERE status IN ('ready', 'in_progress')"
+        ).fetchone()[0]
+
+    def count_past_relevance(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM relevance_queue WHERE status IN ('success', 'failed')"
+        ).fetchone()[0]
+
+    def relevance_queue_stats(self) -> dict:
+        rows = self.conn.execute("""
+            SELECT status, COUNT(*) AS cnt
+            FROM relevance_queue
+            GROUP BY status
+        """).fetchall()
+        return {r["status"]: r["cnt"] for r in rows}
+
+    # ── Mention relevance (results store) ──────────────────────────────
+
+    def save_mention_relevance(self, source_type: str, source_id: str,
+                               entity_type: str, entity_ref: str,
+                               entity_text: str, document_text: str,
+                               model: str, score: float):
+        """Insert a relevance score. Idempotent via UNIQUE constraint."""
+        self.conn.execute("""
+            INSERT OR IGNORE INTO mention_relevance
+                (source_type, source_id, entity_type, entity_ref,
+                 entity_text, document_text, model, score, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (source_type, source_id, entity_type, entity_ref,
+              entity_text, document_text, model, score, time.time()))
+        self.conn.commit()
+
+    def get_relevance_scores_for_source(self, source_type: str,
+                                         source_id: str) -> list[dict]:
+        """Get all relevance scores for a source (post or comment).
+        Returns rows with entity_type, entity_ref, score."""
+        rows = self.conn.execute("""
+            SELECT entity_type, entity_ref, score, model
+            FROM mention_relevance
+            WHERE source_type = ? AND source_id = ?
+            ORDER BY score DESC
+        """, (source_type, source_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_relevance_scores_batch(self, source_type: str,
+                                   source_ids: list[str]) -> dict[str, list[dict]]:
+        """Batch-fetch relevance scores for multiple sources.
+        Returns {source_id: [{entity_type, entity_ref, score}, ...]}."""
+        if not source_ids:
+            return {}
+        placeholders = ",".join("?" * len(source_ids))
+        rows = self.conn.execute(f"""
+            SELECT source_id, entity_type, entity_ref, score
+            FROM mention_relevance
+            WHERE source_type = ? AND source_id IN ({placeholders})
+        """, [source_type] + source_ids).fetchall()
+        result: dict[str, list[dict]] = {sid: [] for sid in source_ids}
+        for r in rows:
+            result[r["source_id"]].append({
+                "entity_type": r["entity_type"],
+                "entity_ref": r["entity_ref"],
+                "score": r["score"],
+            })
+        return result
+
+    def get_unscored_ticker_mentions(self, source_type: str | None = None,
+                                      limit: int = 5000) -> list[dict]:
+        """Find ticker mentions that have no relevance score yet (for backfill).
+        Returns rows with source_type, source_id, ticker, subreddit, created_utc."""
+        where = ""
+        params: list = []
+        if source_type:
+            where = "AND tm.source_type = ?"
+            params.append(source_type)
+        params.append(limit)
+        rows = self.conn.execute(f"""
+            SELECT tm.source_type, tm.source_id, tm.ticker, tm.subreddit, tm.created_utc
+            FROM ticker_mentions tm
+            LEFT JOIN mention_relevance mr
+                ON mr.source_type = tm.source_type
+                AND mr.source_id = tm.source_id
+                AND mr.entity_type = 'ticker'
+                AND mr.entity_ref = tm.ticker
+            WHERE mr.id IS NULL {where}
+            LIMIT ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_unscored_ner_mentions(self, source_type: str | None = None,
+                                  limit: int = 5000) -> list[dict]:
+        """Find named entity mentions with no relevance score yet (for backfill).
+        Returns rows with named_entities.id, source_type, source_id, entity_text."""
+        where = ""
+        params: list = []
+        if source_type:
+            where = "AND ne.source_type = ?"
+            params.append(source_type)
+        params.append(limit)
+        rows = self.conn.execute(f"""
+            SELECT ne.id AS ne_id, ne.source_type, ne.source_id,
+                   ne.entity_text, ne.subreddit, ne.created_utc
+            FROM named_entities ne
+            LEFT JOIN mention_relevance mr
+                ON mr.source_type = ne.source_type
+                AND mr.source_id = ne.source_id
+                AND mr.entity_type = 'ner'
+                AND mr.entity_ref = CAST(ne.id AS TEXT)
+            WHERE mr.id IS NULL {where}
+            LIMIT ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
 
     # ── Ticker pipeline queries ────────────────────────────────────────
 

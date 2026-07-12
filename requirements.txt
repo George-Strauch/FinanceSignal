@@ -31,6 +31,10 @@ websockets==16.0
 # NLP
 spacy>=3.7.0
 
+# Relevance scoring (cross-encoder)
+sentence-transformers>=2.7.0
+torch>=2.2.0
+
 # Market data
 yfinance>=0.2.36
 

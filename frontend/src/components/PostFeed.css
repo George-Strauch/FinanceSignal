@@ -258,25 +258,38 @@
   box-shadow: 0 0 4px rgba(248, 113, 113, 0.5);
 }
 
-/* ── Ticker Chips ─────────────────────────────────────────────── */
+/* ── Tag Chips (tickers + entities with relevance scores) ─────── */
 
-.post-card-tickers {
+.post-card-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 8px;
 }
 
-.post-card-ticker-chip {
-  background: rgb(var(--primary-color));
-  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+.post-card-ticker-chip,
+.post-card-entity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border-radius: 4px;
   padding: 1px 7px;
   font-size: 0.72rem;
   font-weight: 600;
-  color: rgb(var(--soft-text));
   text-decoration: none;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.post-card-ticker-chip {
+  background: rgb(var(--primary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  color: rgb(var(--soft-text));
+}
+
+.post-card-entity-chip {
+  background: rgba(var(--secondary-color), 0.12);
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  color: rgb(var(--secondary-color));
 }
 
 .post-card-ticker-chip:hover {
@@ -284,10 +297,63 @@
   color: rgb(var(--accent));
 }
 
+.post-card-entity-chip:hover {
+  border-color: rgb(var(--secondary-color));
+  color: rgb(var(--secondary-color));
+  background: rgba(var(--secondary-color), 0.2);
+}
+
 .post-card-ticker-chip.current {
   background: rgba(var(--accent), 0.12);
   border-color: rgba(var(--accent), 0.3);
   color: rgb(var(--accent));
+}
+
+.chip-score {
+  font-size: 0.65rem;
+  font-weight: 700;
+  opacity: 0.85;
+  padding-left: 2px;
+}
+
+/* Relevance color coding: high (>=0.7) green, mid (0.4–0.7) amber, low (<0.4) red */
+.rel-high .chip-score { color: #22c55e; }
+.rel-mid .chip-score { color: #f59e0b; }
+.rel-low .chip-score { color: #ef4444; }
+
+/* Relevance badge on card (shown when sort=relevance) */
+.post-card-relevance-badge {
+  position: absolute;
+  top: 8px;
+  right: 38px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(var(--accent), 0.12);
+  color: rgb(var(--accent));
+}
+
+.post-card-relevance-badge.rel-high {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.post-card-relevance-badge.rel-mid {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.post-card-relevance-badge.rel-low {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.post-card {
+  position: relative;
 }
 
 /* ── Post Feed List ───────────────────────────────────────────── */

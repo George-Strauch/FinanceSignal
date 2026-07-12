@@ -40,15 +40,31 @@
         {
             "id": "ner_extraction",
             "name": "NER Extraction",
-            "description": "Extract named entities (people, companies, etc.) from posts and comments using spaCy",
+            "description": "Extract named entities (people, companies, etc.) from posts and comments using spaCy. Drains the ner_queue and enqueues relevance scoring for extracted entities.",
             "module": "app.ner_processor",
             "function": "run_ner_extraction",
             "type": "oneshot",
             "auto_start": false,
-            "schedule": {
-                "interval_minutes": 30,
-                "interval_type": "after_completion"
-            },
+            "on_failure": "stop"
+        },
+        {
+            "id": "relevance_scoring",
+            "name": "Relevance Scoring",
+            "description": "Drains the relevance_queue and scores (source, entity) pairs with the cross-encoder. Run after NER extraction or ticker extraction to process newly enqueued pairs.",
+            "module": "app.relevance_queue",
+            "function": "run_relevance_scoring",
+            "type": "oneshot",
+            "auto_start": false,
+            "on_failure": "stop"
+        },
+        {
+            "id": "relevance_backfill",
+            "name": "Relevance Backfill",
+            "description": "Finds all unscored (source, entity) pairs from ticker_mentions and named_entities and enqueues them into the relevance_queue. Run this then relevance_scoring to backfill scores.",
+            "module": "app.relevance_backfill",
+            "function": "run_relevance_backfill",
+            "type": "oneshot",
+            "auto_start": false,
             "on_failure": "stop"
         },
         {

@@ -10,6 +10,7 @@ from sentinel.config import load_subreddits, DEFAULT_PAGE_LIMIT
 from sentinel.db import RedditDatabase
 from sentinel.fetcher import RedditFetcher
 from sentinel.tickers import extract_tickers, extract_text_from_post, extract_text_from_comment
+from sentinel.relevance_utils import build_post_document, build_comment_document, build_ticker_query, should_score
 
 logger = logging.getLogger(__name__)
 
@@ -281,11 +282,47 @@ def _process_detail_row(db, fetcher, row, state: ScraperState):
     state.comments_this_cycle += len(comments)
     state.total_comments_collected += len(comments)
 
+    # Enqueue NER work for the post and its comments
+    try:
+        _enqueue_ner_for_post(db, post_id, subreddit, detail_post)
+        for comment in comments:
+            comment_id = comment.get("id")
+            if comment_id:
+                db.enqueue_ner(
+                    source_type="comment",
+                    source_id=comment_id,
+                    subreddit=subreddit,
+                    created_utc=comment.get("created_utc"),
+                )
+    except Exception:
+        logger.exception("Failed to enqueue NER work for post %s", post_id)
+
     db.mark_fetch_success(queue_id, posts_fetched=1, posts_new=0)
 
 
+def _enqueue_ner_for_post(db: RedditDatabase, post_id: str, subreddit: str,
+                          detail_post: dict):
+    """Enqueue NER extraction for a post that just had its detail fetched."""
+    created_utc = detail_post.get("created_utc")
+    if isinstance(created_utc, str):
+        try:
+            created_utc = float(created_utc)
+        except (ValueError, TypeError):
+            created_utc = None
+    db.enqueue_ner(
+        source_type="post",
+        source_id=post_id,
+        subreddit=subreddit,
+        created_utc=created_utc,
+    )
+
+
 def _process_tickers():
-    """Run ticker extraction on unprocessed posts and comments (runs in thread)."""
+    """Run ticker extraction on unprocessed posts and comments (runs in thread).
+
+    After saving ticker mentions, enqueues relevance scoring for each mention
+    where the source text is > 15 words.
+    """
     with RedditDatabase() as db:
         # Process posts
         while True:
@@ -307,6 +344,7 @@ def _process_tickers():
                 db.mark_processed("post", post["id"])
             if mentions:
                 db.save_ticker_mentions(mentions)
+                _enqueue_relevance_for_ticker_mentions(db, mentions, posts, "post")
             db.commit()
 
         # Process comments
@@ -329,7 +367,50 @@ def _process_tickers():
                 db.mark_processed("comment", comment["id"])
             if mentions:
                 db.save_ticker_mentions(mentions)
+                _enqueue_relevance_for_ticker_mentions(db, mentions, comments, "comment")
             db.commit()
+
+
+def _enqueue_relevance_for_ticker_mentions(db: RedditDatabase,
+                                           mentions: list[dict],
+                                           sources: list[dict],
+                                           source_type: str):
+    """Enqueue relevance scoring for ticker mentions where text > 15 words.
+
+    Builds the document text from the source and the query from the ticker +
+    resolved company name (if available).
+    """
+    source_map = {s["id"]: s for s in sources}
+    for m in mentions:
+        source = source_map.get(m["source_id"])
+        if not source:
+            continue
+        if source_type == "post":
+            document = build_post_document(source.get("title"), source.get("selftext"))
+        else:
+            document = build_comment_document(source.get("body"))
+
+        if not should_score(document):
+            continue
+
+        # Look up company name from fundamentals
+        company_name = None
+        try:
+            fund = db.get_latest_fundamentals(m["ticker"])
+            if fund and fund.get("name"):
+                company_name = fund["name"]
+        except Exception:
+            pass
+
+        query = build_ticker_query(m["ticker"], company_name)
+        db.enqueue_relevance(
+            source_type=source_type,
+            source_id=m["source_id"],
+            entity_type="ticker",
+            entity_ref=m["ticker"].upper(),
+            entity_text=query,
+            document_text=document,
+        )
 
 
 def reprocess_all_tickers():

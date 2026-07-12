@@ -64,3 +64,4 @@ When implementing stories, follow these rules:
 | 20 | Mention Velocity Alerts | not started |
 | 22 | Historical Evaluations & Time-Aware Discovery | not started |
 | 23 | Event Watcher: LLM-Managed Market Event Tracking | not started |
+| 24 | Cross-Encoder Relevance Ranking for Posts | complete |
