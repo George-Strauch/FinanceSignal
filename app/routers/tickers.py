@@ -644,12 +644,14 @@ def historical_trending(
     date: str = Query(..., description="Date in YYYY-MM-DD format"),
     limit: int = Query(50, ge=1, le=100),
     count_mode: CountMode = CountMode.mentions,
-    forward_days: int = Query(7, ge=0, le=365, description="Days forward to include in price sparkline"),
+    forward_days: int = Query(7, ge=0, le=365, description="Days forward for price sparkline"),
+    lookback_days: int = Query(0, ge=0, le=365, description="Days backward for mention sparkline (0 = just the selected bucket)"),
+    granularity: str = Query("day", description="day | week | month"),
     db: RedditDatabase = Depends(get_db),
-):
+ ):
     _ensure_indexes(db)
 
-    from datetime import datetime as dt_cls
+    from datetime import datetime as dt_cls, timedelta
     try:
         sel_date = dt_cls.strptime(date, "%Y-%m-%d").date()
     except ValueError:
@@ -657,8 +659,29 @@ def historical_trending(
         raise HTTPException(status_code=422, detail="Invalid date format. Use YYYY-MM-DD.")
 
     from datetime import time as dt_time
-    start_ts = dt_cls.combine(sel_date, dt_time.min, tzinfo=ET).timestamp()
-    end_ts = dt_cls.combine(sel_date, dt_time.max, tzinfo=ET).timestamp()
+
+    # ── Compute date bounds based on granularity ─────────────────
+    if granularity == "week":
+        # Monday of the selected week
+        week_start = sel_date - timedelta(days=sel_date.weekday())
+        bucket_start_date = week_start
+        bucket_end_date = week_start + timedelta(days=7)
+    elif granularity == "month":
+        bucket_start_date = sel_date.replace(day=1)
+        if sel_date.month == 12:
+            bucket_end_date = sel_date.replace(year=sel_date.year + 1, month=1, day=1)
+        else:
+            bucket_end_date = sel_date.replace(month=sel_date.month + 1, day=1)
+    else:
+        bucket_start_date = sel_date
+        bucket_end_date = sel_date + timedelta(days=1)
+
+    start_ts = dt_cls.combine(bucket_start_date, dt_time.min, tzinfo=ET).timestamp()
+    end_ts = dt_cls.combine(bucket_end_date, dt_time.min, tzinfo=ET).timestamp()
+
+    # ── Mention sparkline: bucket + lookback ──────────────────────
+    spark_start_date = bucket_start_date - timedelta(days=lookback_days)
+    spark_start_ts = dt_cls.combine(spark_start_date, dt_time.min, tzinfo=ET).timestamp()
 
     if count_mode == CountMode.authors:
         rows = db.conn.execute(
@@ -734,7 +757,24 @@ def historical_trending(
         for sr in sub_rows:
             sub_map.setdefault(sr["ticker"], []).append(sr["subreddit"])
 
-        bucket_fmt = "%Y-%m-%dT%H:00:00"
+        # Bucket format depends on granularity + lookback
+        if granularity == "month":
+            bucket_fmt = "%Y-%m"
+        elif granularity == "week":
+            bucket_fmt = "%Y-%m-%d"  # will be floored to Monday
+        else:
+            bucket_fmt = "%Y-%m-%dT%H:00:00"
+
+        def _bucket_key(ts):
+            """Floor a timestamp to the appropriate bucket."""
+            dt = datetime.fromtimestamp(ts, tz=ET)
+            if granularity == "month":
+                return dt.strftime("%Y-%m")
+            elif granularity == "week":
+                monday = dt - timedelta(days=dt.weekday())
+                return monday.strftime("%Y-%m-%d")
+            else:
+                return dt.strftime("%Y-%m-%dT%H:00:00")
 
         if count_mode == CountMode.authors:
             spark_rows = db.conn.execute(
@@ -751,11 +791,11 @@ def historical_trending(
                     WHERE tm.created_utc >= ? AND tm.created_utc <= ? AND tm.ticker IN ({placeholders})
                 )
                 """,
-                [start_ts, end_ts, *tickers_in_result, start_ts, end_ts, *tickers_in_result],
+                [spark_start_ts, end_ts, *tickers_in_result, spark_start_ts, end_ts, *tickers_in_result],
             ).fetchall()
             spark_sets: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
             for sr in spark_rows:
-                bucket = _et_bucket(sr["created_utc"], bucket_fmt)
+                bucket = _bucket_key(sr["created_utc"])
                 spark_sets[sr["ticker"]][bucket].add(sr["author"])
             for tk, buckets in spark_sets.items():
                 sparkline_map[tk] = [
@@ -769,11 +809,11 @@ def historical_trending(
                 WHERE created_utc >= ? AND created_utc <= ? AND ticker IN ({placeholders})
                   AND source_type = 'post'
                 """,
-                [start_ts, end_ts, *tickers_in_result],
+                [spark_start_ts, end_ts, *tickers_in_result],
             ).fetchall()
             spark_counter: dict[str, Counter] = defaultdict(Counter)
             for sr in spark_rows:
-                bucket = _et_bucket(sr["created_utc"], bucket_fmt)
+                bucket = _bucket_key(sr["created_utc"])
                 spark_counter[sr["ticker"]][bucket] += 1
             for tk, counts in spark_counter.items():
                 sparkline_map[tk] = [
@@ -786,11 +826,11 @@ def historical_trending(
                 FROM ticker_mentions
                 WHERE created_utc >= ? AND created_utc <= ? AND ticker IN ({placeholders})
                 """,
-                [start_ts, end_ts, *tickers_in_result],
+                [spark_start_ts, end_ts, *tickers_in_result],
             ).fetchall()
             spark_counter: dict[str, Counter] = defaultdict(Counter)
             for sr in spark_rows:
-                bucket = _et_bucket(sr["created_utc"], bucket_fmt)
+                bucket = _bucket_key(sr["created_utc"])
                 spark_counter[sr["ticker"]][bucket] += 1
             for tk, counts in spark_counter.items():
                 sparkline_map[tk] = [
@@ -814,23 +854,33 @@ def historical_trending(
                 "sector": fr.get("sector"),
             }
 
-    # ── Price sparkline: selected day + N days forward ──────────
+    # ── Price sparkline: selected bucket + N days forward ────────
     price_sparkline_map: dict[str, list[dict]] = {}
+    price_change_pct_map: dict[str, float | None] = {}
     if tickers_in_result and forward_days > 0:
-        from datetime import timedelta
         forward_end_ts = dt_cls.combine(
-            sel_date + timedelta(days=forward_days),
+            bucket_end_date + timedelta(days=forward_days - 1),
             dt_time.max,
             tzinfo=ET,
         ).timestamp()
         for tk in tickers_in_result:
             price_rows = db.get_price_range(tk, start_ts, forward_end_ts)
             if price_rows:
-                price_sparkline_map[tk] = [
+                sparkline_points = [
                     {"t": datetime.fromtimestamp(r["timestamp"], tz=ET).isoformat(), "p": r.get("close")}
                     for r in price_rows
                     if r.get("close") is not None
                 ]
+                price_sparkline_map[tk] = sparkline_points
+                # Price change %: first close in bucket vs last close in forward window
+                closes = [r for r in price_rows if r.get("close") is not None]
+                if len(closes) >= 2:
+                    first_close = closes[0]["close"]
+                    last_close = closes[-1]["close"]
+                    if first_close and first_close != 0:
+                        price_change_pct_map[tk] = round(
+                            ((last_close - first_close) / first_close) * 100, 2
+                        )
 
     def _compute_trend(points: list[dict]) -> str:
         if len(points) < 2:
@@ -851,6 +901,9 @@ def historical_trending(
 
     return {
         "date": date,
+        "granularity": granularity,
+        "bucket_start": bucket_start_date.isoformat(),
+        "bucket_end": bucket_end_date.isoformat(),
         "count_mode": count_mode.value,
         "tickers": [
             {
@@ -867,6 +920,7 @@ def historical_trending(
                 "tags": tag_map.get(r["ticker"], []),
                 "fundamentals": fundamentals_map.get(r["ticker"]),
                 "price_sparkline": price_sparkline_map.get(r["ticker"], []),
+                "price_change_pct": price_change_pct_map.get(r["ticker"]),
             }
             for r in rows
         ],
