@@ -33,14 +33,29 @@ HONEYPOT_MARKERS = (
 
 
 def detect_honeypot(html: str) -> tuple[bool, str | None]:
-    """Return (is_honeypot, matched_marker) for a fetched HTML page."""
+    """Return (is_honeypot, matched_marker) for a fetched HTML page.
+
+    Only actual challenge/interstitial markers count as a honeypot. Empty or
+    very short responses are transient failures (network blip, rate-limit
+    edge, Reddit hiccup) — the caller retries them as network errors, not
+    honeypots. A real old.reddit.com listing/comments page is >10KB.
+    """
     if not html:
-        return True, "empty_response"
+        return False, None
     lower = html.lower()
     for marker in HONEYPOT_MARKERS:
         if marker in lower:
             return True, marker
     return False, None
+
+
+def is_valid_response(html: str) -> bool:
+    """True if the response looks like real Reddit HTML (not empty/truncated).
+
+    Real listing and comments pages are well over 10KB. Anything shorter is
+    a transient failure — the caller should retry it like a network error.
+    """
+    return bool(html) and len(html) > 1000
 
 
 # ── Listing parsing ──────────────────────────────────────────────────────

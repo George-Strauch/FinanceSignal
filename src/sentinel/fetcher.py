@@ -19,6 +19,7 @@ import requests
 from sentinel.config import MIN_REQUEST_INTERVAL, MAX_RETRIES, USER_AGENT
 from sentinel.reddit_html import (
     detect_honeypot,
+    is_valid_response,
     parse_listing,
     parse_post_detail,
 )
@@ -160,7 +161,7 @@ class RedditFetcher:
                     continue
                 raise
 
-            # Honeypot / JS challenge detection
+            # Honeypot / JS challenge detection (only real challenge markers)
             is_honeypot, marker = detect_honeypot(resp.text)
             if is_honeypot:
                 logger.warning(
@@ -176,6 +177,25 @@ class RedditFetcher:
                 raise RuntimeError(
                     f"honeypot page persists after {MAX_RETRIES} attempts "
                     f"for {url} (marker={marker!r}) — skipping"
+                )
+
+            # Empty / truncated response — transient failure (network blip,
+            # rate-limit edge, Reddit hiccup). Retry like a network error,
+            # NOT a honeypot. Real listing/comments pages are >10KB.
+            if not is_valid_response(resp.text):
+                resp_len = len(resp.text) if resp.text else 0
+                logger.warning(
+                    "Empty/truncated response for %s (len=%d, status=%d) — "
+                    "transient failure, retry %d/%d",
+                    url, resp_len, resp.status_code, attempt, MAX_RETRIES,
+                )
+                if attempt < MAX_RETRIES:
+                    wait = self._min_interval * (2 ** (attempt - 1))
+                    time.sleep(wait)
+                    continue
+                raise RuntimeError(
+                    f"empty/truncated response persists after {MAX_RETRIES} "
+                    f"attempts for {url} (len={resp_len}) — skipping"
                 )
 
             if resp.status_code == 429:
