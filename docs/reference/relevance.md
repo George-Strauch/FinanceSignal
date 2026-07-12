@@ -189,8 +189,68 @@ filter is active. It's disabled/hidden when no entity context is provided.
 | `app/scraper.py` | Scraper hook — enqueues NER on detail success; ticker hook enqueues relevance |
 | `app/routers/posts.py` | `sort=relevance`, `ticker_scores`/`entity_scores` in payload |
 | `app/routers/processes.py` | `/ner-queue` and `/relevance-queue` API endpoints |
+| `app/fetch_processor.py` | Shared listing/detail processing for scraper + backfetch |
 | `frontend/src/components/PostCard.jsx` | Tag chips with scores, relevance badge |
 | `frontend/src/components/PostFeed.jsx` | Relevance sort option |
+
+## Batching
+
+Both NER and relevance scoring use **batch processing** to reduce bottlenecks:
+
+- **NER**: Claims 64 rows at once via `claim_next_ner_batch(64)`, fetches source
+  texts in bulk (one `SELECT ... WHERE id IN (...)` per source type), runs
+  `nlp.pipe(texts, batch_size=50)` for spaCy batch inference, batch-saves
+  entities, and batch-enqueues relevance work (bulk `named_entities.id` lookup
+  via a single `WHERE (source_type, source_id, entity_text, entity_label) IN (...)`
+  query).
+
+- **Relevance scoring**: Claims 64 rows at once via `claim_next_relevance_batch(64)`,
+  splits into NER rows (scored immediately) and ticker rows (checked against
+  fundamentals — see company-name-wait below), then runs `score_pairs(batch)`
+  on the combined batch.
+
+## Company-name-wait for ticker rows
+
+Ticker relevance pairs need a company name for the best query string
+(`"$NVDA — NVIDIA Corporation"`). If fundamentals aren't available yet,
+the row is **requeued** with a delay rather than scored immediately:
+
+1. **Fundamentals exist, name present** → rebuild query with name, score
+2. **Fundamentals exist, name null** → score with symbol-only (fine — yfinance
+   didn't return a name for this ticker)
+3. **Fundamentals exist, fetch failed with `no_data`/`no_price_data`** →
+   **permanent failure** — likely ambiguous or incorrectly parsed ticker
+   symbol (e.g., `TSXE`, `AND`, `ATM` — common words misidentified as tickers)
+4. **Fundamentals exist, fetch failed with other error** (e.g., `rate_limited`)
+   → requeue with delay
+5. **No fundamentals row exists** → requeue with 300s delay (wait for the
+   fundamentals fetcher). After 3 retries, attempt a synchronous on-demand
+   `fetch_single_ticker`. If that also fails with `no_data` → permanent failure.
+
+### Requeue mechanism
+
+The `relevance_queue` table has `attempts` and `next_attempt_at` columns:
+- `attempts`: incremented on each requeue (max 4 = 3 retries + 1 final)
+- `next_attempt_at`: `time.time() + delay` — `claim_next_relevance_batch`
+  filters on `next_attempt_at IS NULL OR next_attempt_at <= now`
+- Delay grows exponentially: 300s, 600s, 1200s (capped at 1800s)
+
+## Backfetch integration
+
+The backfetch job now uses the same `fetch_queue` as the scraper, with
+`source='backfetch'` to keep the queues separated. The
+`/api/processes/backfetch/fetch-queue` endpoint returns backfetch-specific
+queue rows. The Process Monitor shows the same fetch-queue tables for both
+jobs.
+
+Backfetch enqueues page 1 for each subreddit, then drains the queue using
+the same `process_listing_row` / `process_detail_row` shared functions. The
+key difference: backfetch always paginates up to `MAX_PAGES=10` regardless of
+whether new posts are found (metadata refresh), while the scraper only
+enqueues next page if new posts were found (caught-up check).
+
+New posts from backfetch listings also get detail fetches (selftext +
+comments + media) and NER work enqueued — full pipeline, same as scraper.
 
 ## Known limitations / gaps
 
@@ -205,18 +265,11 @@ filter is active. It's disabled/hidden when no entity context is provided.
    in passing. Scores ≥0.4 are genuinely on-topic. This is by design —
    the model distinguishes topical discussion from name-dropping.
 
-3. **NER processes one source at a time** (not batched via `nlp.pipe`).
-   This is simpler for the queue architecture but slower for bulk backfill.
-   Optimization: batch-claim N rows, run `nlp.pipe`, then mark all. Flagged
-   for future optimization if backfill throughput becomes a bottleneck.
+3. **NER auto-backfill inserts one row at a time**: The `_backfill_unprocessed`
+   function inserts 100K+ rows one at a time via `enqueue_ner`. This is slow
+   for initial backfill. Optimization: bulk-insert with `executemany`.
 
-4. **Company name lookup is per-ticker** in the ticker relevance enqueue
-   path. If fundamentals aren't fetched yet, the query falls back to
-   symbol-only (`"$NVDA"`). The fundamentals fetcher runs on a 30-min
-   schedule, so newly mentioned tickers may have no company name until the
-   next fundamentals cycle.
-
-5. **Docker image size**: `sentence-transformers` + `torch` (CPU) adds
+4. **Docker image size**: `sentence-transformers` + `torch` (CPU) adds
    ~800MB to the image. The model is pre-downloaded during build to avoid
    runtime downloads.
 

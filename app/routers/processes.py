@@ -209,20 +209,26 @@ async def get_fetch_queue(
     ready_limit: int = 100,
     db: RedditDatabase = Depends(get_db),
 ):
-    """Fetch queue state for the reddit_scraper job.
+    """Fetch queue state for reddit_scraper or backfetch jobs.
 
-    Returns ready/in_progress rows (the queue) and past success/failed rows
-    (history, paginated via past_limit/past_offset), plus summary stats and
-    total counts for infinite scroll.
+    The source filter is derived from the job_id:
+    - reddit_scraper → source='scraper'
+    - backfetch → source='backfetch'
     """
-    if job_id != "reddit_scraper":
-        raise HTTPException(status_code=404, detail="Fetch queue only for reddit_scraper")
+    source_map = {
+        "reddit_scraper": "scraper",
+        "backfetch": "backfetch",
+    }
+    if job_id not in source_map:
+        raise HTTPException(status_code=404, detail="Fetch queue only for reddit_scraper or backfetch")
 
-    ready = db.get_ready_queue(limit=ready_limit)
-    past = db.get_past_fetches(limit=past_limit, offset=past_offset)
-    stats = db.queue_stats()
-    past_total = db.count_past_fetches()
-    ready_total = db.count_ready_queue()
+    source = source_map[job_id]
+
+    ready = db.get_ready_queue(limit=ready_limit, source=source)
+    past = db.get_past_fetches(limit=past_limit, offset=past_offset, source=source)
+    stats = db.queue_stats(source=source)
+    past_total = db.count_past_fetches(source=source)
+    ready_total = db.count_ready_queue(source=source)
 
     def _fmt_row(r):
         return {
@@ -232,6 +238,7 @@ async def get_fetch_queue(
             "fetch_type": r["fetch_type"],
             "page_num": r["page_num"],
             "status": r["status"],
+            "source": r.get("source"),
             "enqueued_at": _ts(r.get("enqueued_at")),
             "claimed_at": _ts(r.get("claimed_at")),
             "fetch_started_at": _ts(r.get("fetch_started_at")),
@@ -315,6 +322,8 @@ def _fmt_relevance_row(r):
         "processing_started_at": _ts(r.get("processing_started_at")),
         "completed_at": _ts(r.get("completed_at")),
         "score": r.get("score"),
+        "attempts": r.get("attempts", 0),
+        "next_attempt_at": _ts(r.get("next_attempt_at")),
         "error": r.get("error"),
         "log_id": r.get("log_id"),
     }

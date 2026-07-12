@@ -604,6 +604,9 @@ class RedditDatabase:
             "ALTER TABLE ticker_fundamentals_latest ADD COLUMN long_business_summary TEXT",
             "ALTER TABLE named_entities ADD COLUMN is_canonical INTEGER DEFAULT 0",
             "ALTER TABLE named_entities ADD COLUMN canonical_link INTEGER DEFAULT NULL",
+            "ALTER TABLE fetch_queue ADD COLUMN source TEXT DEFAULT 'scraper'",
+            "ALTER TABLE relevance_queue ADD COLUMN attempts INTEGER DEFAULT 0",
+            "ALTER TABLE relevance_queue ADD COLUMN next_attempt_at REAL",
         ]:
             try:
                 self.conn.execute(col_sql)
@@ -615,6 +618,22 @@ class RedditDatabase:
         try:
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ne_canonical_link ON named_entities(canonical_link)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        # Composite index for relevance_queue claim with next_attempt_at filter
+        try:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rq_ready_delay ON relevance_queue(status, next_attempt_at, enqueued_at)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        # Composite index for fetch_queue claim with source filter
+        try:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fq_source_ready ON fetch_queue(status, source, enqueued_at)"
             )
         except sqlite3.OperationalError:
             pass
@@ -839,32 +858,38 @@ class RedditDatabase:
                       fetch_type: str = "listing",
                       after_cursor: str | None = None,
                       page_num: int = 1,
-                      cycle_id: int | None = None) -> int:
+                      cycle_id: int | None = None,
+                      source: str = "scraper") -> int:
         """Add a row to the fetch queue. Returns the row id."""
         cur = self.conn.execute("""
             INSERT INTO fetch_queue
                 (subreddit, url, fetch_type, after_cursor, page_num,
-                 status, enqueued_at, cycle_id)
-            VALUES (?, ?, ?, ?, ?, 'ready', ?, ?)
+                 status, enqueued_at, cycle_id, source)
+            VALUES (?, ?, ?, ?, ?, 'ready', ?, ?, ?)
         """, (subreddit, url, fetch_type, after_cursor, page_num,
-              time.time(), cycle_id))
+              time.time(), cycle_id, source))
         self.conn.commit()
         return cur.lastrowid
 
-    def claim_next_fetch(self) -> dict | None:
+    def claim_next_fetch(self, source: str | None = None) -> dict | None:
         """Atomically claim the oldest 'ready' row. Returns it as a dict
-        or None if the queue is empty. Sets status='in_progress'."""
-        cur = self.conn.execute("""
+        or None if the queue is empty. Sets status='in_progress'.
+        If source is specified, only claims rows with that source."""
+        source_filter = "AND source = ?" if source else ""
+        params = [time.time()]
+        if source:
+            params.append(source)
+        cur = self.conn.execute(f"""
             UPDATE fetch_queue
             SET status = 'in_progress', claimed_at = ?
             WHERE id = (
                 SELECT id FROM fetch_queue
-                WHERE status = 'ready'
+                WHERE status = 'ready' {source_filter}
                 ORDER BY enqueued_at ASC
                 LIMIT 1
             )
             RETURNING id
-        """, (time.time(),))
+        """, params)
         row = cur.fetchone()
         if row is None:
             return None
@@ -911,36 +936,52 @@ class RedditDatabase:
         )
         self.conn.commit()
 
-    def get_ready_queue(self, limit: int = 100, offset: int = 0) -> list[dict]:
+    def get_ready_queue(self, limit: int = 100, offset: int = 0,
+                        source: str | None = None) -> list[dict]:
         """Return 'ready' and 'in_progress' rows, oldest first."""
-        rows = self.conn.execute("""
+        source_filter = "AND source = ?" if source else ""
+        params = [limit, offset]
+        if source:
+            params.insert(0, source)
+        rows = self.conn.execute(f"""
             SELECT * FROM fetch_queue
-            WHERE status IN ('ready', 'in_progress')
+            WHERE status IN ('ready', 'in_progress') {source_filter}
             ORDER BY enqueued_at ASC
             LIMIT ? OFFSET ?
-        """, (limit, offset)).fetchall()
+        """, params).fetchall()
         return [dict(r) for r in rows]
 
-    def get_past_fetches(self, limit: int = 100, offset: int = 0) -> list[dict]:
+    def get_past_fetches(self, limit: int = 100, offset: int = 0,
+                         source: str | None = None) -> list[dict]:
         """Return completed (success/failed) rows, newest first."""
-        rows = self.conn.execute("""
+        source_filter = "AND source = ?" if source else ""
+        params = [limit, offset]
+        if source:
+            params.insert(0, source)
+        rows = self.conn.execute(f"""
             SELECT * FROM fetch_queue
-            WHERE status IN ('success', 'failed')
+            WHERE status IN ('success', 'failed') {source_filter}
             ORDER BY fetch_completed_at DESC
             LIMIT ? OFFSET ?
-        """, (limit, offset)).fetchall()
+        """, params).fetchall()
         return [dict(r) for r in rows]
 
-    def count_ready_queue(self) -> int:
+    def count_ready_queue(self, source: str | None = None) -> int:
         """Count of ready + in_progress rows."""
+        source_filter = "AND source = ?" if source else ""
+        params = [source] if source else []
         return self.conn.execute(
-            "SELECT COUNT(*) FROM fetch_queue WHERE status IN ('ready', 'in_progress')"
+            f"SELECT COUNT(*) FROM fetch_queue WHERE status IN ('ready', 'in_progress') {source_filter}",
+            params
         ).fetchone()[0]
 
-    def count_past_fetches(self) -> int:
+    def count_past_fetches(self, source: str | None = None) -> int:
         """Count of success + failed rows."""
+        source_filter = "AND source = ?" if source else ""
+        params = [source] if source else []
         return self.conn.execute(
-            "SELECT COUNT(*) FROM fetch_queue WHERE status IN ('success', 'failed')"
+            f"SELECT COUNT(*) FROM fetch_queue WHERE status IN ('success', 'failed') {source_filter}",
+            params
         ).fetchone()[0]
 
     def clear_ready_queue(self):
@@ -951,13 +992,16 @@ class RedditDatabase:
         )
         self.conn.commit()
 
-    def queue_stats(self) -> dict:
+    def queue_stats(self, source: str | None = None) -> dict:
         """Return counts by status for the fetch queue."""
-        rows = self.conn.execute("""
+        source_filter = "WHERE source = ?" if source else ""
+        params = [source] if source else []
+        rows = self.conn.execute(f"""
             SELECT status, COUNT(*) AS cnt
             FROM fetch_queue
+            {source_filter}
             GROUP BY status
-        """).fetchall()
+        """, params).fetchall()
         return {r["status"]: r["cnt"] for r in rows}
 
     # ── NER queue ──────────────────────────────────────────────────────
@@ -1000,6 +1044,30 @@ class RedditDatabase:
         ).fetchone()
         self.conn.commit()
         return dict(full) if full else None
+
+    def claim_next_ner_batch(self, n: int) -> list[dict]:
+        """Atomically claim up to N oldest 'ready' NER rows."""
+        cur = self.conn.execute("""
+            UPDATE ner_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id IN (
+                SELECT id FROM ner_queue
+                WHERE status = 'ready'
+                ORDER BY enqueued_at ASC
+                LIMIT ?
+            )
+            RETURNING id
+        """, (time.time(), n))
+        ids = [r[0] for r in cur.fetchall()]
+        if not ids:
+            self.conn.commit()
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            f"SELECT * FROM ner_queue WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        self.conn.commit()
+        return [dict(r) for r in rows]
 
     def mark_ner_started(self, queue_id: int):
         self.conn.execute(
@@ -1085,18 +1153,21 @@ class RedditDatabase:
             return None
 
     def claim_next_relevance(self) -> dict | None:
-        """Atomically claim the oldest 'ready' relevance row."""
+        """Atomically claim the oldest 'ready' relevance row whose
+        next_attempt_at has passed (or is NULL)."""
+        now = time.time()
         cur = self.conn.execute("""
             UPDATE relevance_queue
             SET status = 'in_progress', claimed_at = ?
             WHERE id = (
                 SELECT id FROM relevance_queue
                 WHERE status = 'ready'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 ORDER BY enqueued_at ASC
                 LIMIT 1
             )
             RETURNING id
-        """, (time.time(),))
+        """, (now, now))
         row = cur.fetchone()
         if row is None:
             return None
@@ -1105,6 +1176,33 @@ class RedditDatabase:
         ).fetchone()
         self.conn.commit()
         return dict(full) if full else None
+
+    def claim_next_relevance_batch(self, n: int) -> list[dict]:
+        """Atomically claim up to N oldest 'ready' relevance rows whose
+        next_attempt_at has passed (or is NULL)."""
+        now = time.time()
+        cur = self.conn.execute("""
+            UPDATE relevance_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id IN (
+                SELECT id FROM relevance_queue
+                WHERE status = 'ready'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY enqueued_at ASC
+                LIMIT ?
+            )
+            RETURNING id
+        """, (now, now, n))
+        ids = [r[0] for r in cur.fetchall()]
+        if not ids:
+            self.conn.commit()
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            f"SELECT * FROM relevance_queue WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        self.conn.commit()
+        return [dict(r) for r in rows]
 
     def mark_relevance_started(self, queue_id: int):
         self.conn.execute(
@@ -1131,6 +1229,35 @@ class RedditDatabase:
                 error = ?, log_id = ?
             WHERE id = ?
         """, (time.time(), error, log_id, queue_id))
+        self.conn.commit()
+
+    def requeue_relevance(self, queue_id: int, delay: float,
+                          error: str | None = None,
+                          max_attempts: int = 3,
+                          log_id: int | None = None):
+        """Requeue a relevance row for later processing. Increments attempts.
+        If attempts exceed max_attempts, marks as permanently failed."""
+        row = self.conn.execute(
+            "SELECT attempts FROM relevance_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+        if row is None:
+            return
+        attempts = (row["attempts"] or 0) + 1
+        if attempts >= max_attempts:
+            self.conn.execute("""
+                UPDATE relevance_queue
+                SET status = 'failed', completed_at = ?,
+                    error = ?, attempts = ?, log_id = ?
+                WHERE id = ?
+            """, (time.time(), error or "max retries exceeded", attempts, log_id, queue_id))
+        else:
+            self.conn.execute("""
+                UPDATE relevance_queue
+                SET status = 'ready', claimed_at = NULL,
+                    next_attempt_at = ?, attempts = ?,
+                    error = ?
+                WHERE id = ?
+            """, (time.time() + delay, attempts, error, queue_id))
         self.conn.commit()
 
     def get_ready_relevance(self, limit: int = 100, offset: int = 0) -> list[dict]:

@@ -416,12 +416,18 @@ class ProcessManager:
             return state
 
         if proc.id == "backfetch":
-            from app.backfetch import BackfetchState, _parse_subreddits
+            from app.backfetch import BackfetchState
             params = proc.current_params
             state = BackfetchState()
             state._stop_event = proc._stop_event
             state.log_buffer = proc.log_buffer
-            state.subreddits = _parse_subreddits(str(params.get("subreddits", "")))
+            if params.get("subreddits"):
+                subs_str = str(params["subreddits"]).strip()
+                if subs_str:
+                    state.subreddits = [
+                        s.strip().removeprefix("r/").removeprefix("/r/")
+                        for s in subs_str.replace(",", " ").split() if s.strip()
+                    ]
             if "request_delay_seconds" in params:
                 state.request_delay = float(params["request_delay_seconds"])
             return state

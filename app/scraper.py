@@ -11,6 +11,7 @@ from sentinel.db import RedditDatabase
 from sentinel.fetcher import RedditFetcher
 from sentinel.tickers import extract_tickers, extract_text_from_post, extract_text_from_comment
 from sentinel.relevance_utils import build_post_document, build_comment_document, build_ticker_query, should_score
+from app.fetch_processor import FetchCounters, process_listing_row, process_detail_row
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ async def run_scraper_cycle(state: ScraperState):
                     fetch_type="listing",
                     page_num=1,
                     cycle_id=cycle_id,
+                    source="scraper",
                 )
                 enqueued += 1
         logger.info("Enqueued %d listing fetches for cycle %d", enqueued, cycle_id)
@@ -124,19 +126,14 @@ async def run_scraper_cycle(state: ScraperState):
 
 
 def _process_queue(state: ScraperState, cycle_id: int):
-    """Claim and process fetch_queue rows until the queue is empty or stopped.
-
-    Each row is either a 'listing' (subreddit /new/ page) or a 'detail'
-    (individual post permalink). Listings may enqueue the next page if no
-    known post was found (not caught up yet). New posts from listings
-    enqueue a detail fetch for selftext + comments.
-    """
+    """Claim and process fetch_queue rows (source='scraper') until empty or stopped."""
     fetcher = RedditFetcher(min_interval=state.request_delay)
     pages_per_sub: dict[str, int] = {}
+    counters = FetchCounters()
 
     with RedditDatabase() as db:
         while not state._stop_event.is_set():
-            row = db.claim_next_fetch()
+            row = db.claim_next_fetch(source="scraper")
             if row is None:
                 break
 
@@ -144,9 +141,19 @@ def _process_queue(state: ScraperState, cycle_id: int):
             db.mark_fetch_started(row["id"])
 
             if row["fetch_type"] == "listing":
-                _process_listing_row(db, fetcher, row, state, cycle_id, pages_per_sub)
+                counters.reset()
+                process_listing_row(db, fetcher, row, "scraper", cycle_id,
+                                    pages_per_sub, MAX_PAGES_PER_CYCLE, counters)
+                state.posts_this_cycle += counters.posts_new
+                state.total_posts_collected += counters.posts_new
+                state.errors_this_cycle += counters.errors
+                state.subreddit_stats.setdefault(row["subreddit"], SubredditStats()).posts_last_cycle += counters.posts_new
             elif row["fetch_type"] == "detail":
-                _process_detail_row(db, fetcher, row, state)
+                counters.reset()
+                process_detail_row(db, fetcher, row, counters)
+                state.comments_this_cycle += counters.comments
+                state.total_comments_collected += counters.comments
+                state.errors_this_cycle += counters.errors
             else:
                 db.mark_fetch_failed(row["id"], f"unknown fetch_type: {row['fetch_type']}")
 
@@ -155,166 +162,6 @@ def _process_queue(state: ScraperState, cycle_id: int):
         if stats.status == "pending":
             stats.status = "ok"
             stats.last_fetched = time.time()
-
-
-def _process_listing_row(db, fetcher, row, state: ScraperState,
-                         cycle_id: int, pages_per_sub: dict[str, int]):
-    """Process a listing fetch: parse posts, enqueue details + next page."""
-    subreddit = row["subreddit"]
-    page_num = row["page_num"]
-    queue_id = row["id"]
-    after_cursor = row.get("after_cursor")
-
-    try:
-        response = fetcher.fetch_new_posts(
-            subreddit, limit=DEFAULT_PAGE_LIMIT, after=after_cursor
-        )
-    except Exception as exc:
-        logger.exception("fetch_new_posts failed r/%s page %d", subreddit, page_num)
-        state.errors_this_cycle += 1
-        db.mark_fetch_failed(queue_id, str(exc))
-        return
-
-    posts = response["posts"]
-    next_after = response.get("after")
-    page_new = 0
-
-    for raw_post in posts:
-        try:
-            post_data = raw_post.get("data", {})
-            post_id = post_data.get("id", "")
-            if not post_id:
-                continue
-
-            existing = db.conn.execute(
-                "SELECT 1 FROM posts WHERE id = ?", (post_id,)
-            ).fetchone()
-            if existing:
-                # Already known — cheap refresh, no detail fetch needed
-                db.upsert_post(raw_post, subreddit)
-                continue
-
-            # New post — upsert listing data, then enqueue a detail fetch
-            # for selftext + comments + media
-            db.upsert_post(raw_post, subreddit)
-            state.posts_this_cycle += 1
-            state.total_posts_collected += 1
-            page_new += 1
-            state.subreddit_stats.setdefault(subreddit, SubredditStats()).posts_last_cycle += 1
-
-            media_links = fetcher.extract_media_links(raw_post)
-            if media_links:
-                db.save_media_links(post_id, media_links)
-
-            detail_url = f"https://old.reddit.com/r/{subreddit}/comments/{post_id}/"
-            db.enqueue_fetch(
-                subreddit=subreddit,
-                url=detail_url,
-                fetch_type="detail",
-                page_num=page_num,
-                cycle_id=cycle_id,
-            )
-        except Exception:
-            logger.exception("Post processing failed in r/%s", subreddit)
-            state.errors_this_cycle += 1
-
-    db.mark_fetch_success(queue_id, posts_fetched=len(posts),
-                          posts_new=page_new, next_after=next_after)
-
-    logger.info(
-        "r/%s page %d — %d new, %d updated",
-        subreddit, page_num, page_new, len(posts) - page_new,
-    )
-
-    # Enqueue next page if we haven't hit the cap AND we found new posts
-    # (a page with zero new posts means we're caught up).
-    pages_per_sub[subreddit] = pages_per_sub.get(subreddit, 0) + 1
-    if page_new > 0 and next_after and pages_per_sub[subreddit] < MAX_PAGES_PER_CYCLE:
-        next_url = f"https://old.reddit.com/r/{subreddit}/new/?after={next_after}&count=25"
-        db.enqueue_fetch(
-            subreddit=subreddit,
-            url=next_url,
-            fetch_type="listing",
-            after_cursor=next_after,
-            page_num=page_num + 1,
-            cycle_id=cycle_id,
-        )
-
-
-def _process_detail_row(db, fetcher, row, state: ScraperState):
-    """Process a detail fetch: get selftext + comments + media for one post."""
-    subreddit = row["subreddit"]
-    queue_id = row["id"]
-    # Extract post_id from the URL: .../comments/{post_id}/
-    import re
-    m = re.search(r"/comments/([a-z0-9]+)", row["url"])
-    if not m:
-        db.mark_fetch_failed(queue_id, "could not parse post_id from url")
-        return
-    post_id = m.group(1)
-
-    try:
-        detail = fetcher.fetch_post_detail(subreddit, post_id)
-    except Exception as exc:
-        logger.exception("Post detail failed for %s", post_id)
-        state.errors_this_cycle += 1
-        db.mark_fetch_failed(queue_id, str(exc))
-        return
-
-    detail_post = (detail.get("post") or {}).get("data", {})
-    selftext = detail_post.get("selftext")
-    if selftext:
-        # Update the post's selftext directly — avoids the raw_json
-        # circular-reference issue from reusing the stored dict shape.
-        db.conn.execute(
-            "UPDATE posts SET selftext = ?, selftext_html = ? WHERE id = ?",
-            (selftext, detail_post.get("selftext_html"), post_id),
-        )
-        db.conn.commit()
-
-    media_links = detail.get("media_links", [])
-    if media_links:
-        db.save_media_links(post_id, media_links)
-
-    comments = detail.get("comments", [])
-    for comment in comments:
-        db.upsert_comment(comment, post_id)
-    state.comments_this_cycle += len(comments)
-    state.total_comments_collected += len(comments)
-
-    # Enqueue NER work for the post and its comments
-    try:
-        _enqueue_ner_for_post(db, post_id, subreddit, detail_post)
-        for comment in comments:
-            comment_id = comment.get("id")
-            if comment_id:
-                db.enqueue_ner(
-                    source_type="comment",
-                    source_id=comment_id,
-                    subreddit=subreddit,
-                    created_utc=comment.get("created_utc"),
-                )
-    except Exception:
-        logger.exception("Failed to enqueue NER work for post %s", post_id)
-
-    db.mark_fetch_success(queue_id, posts_fetched=1, posts_new=0)
-
-
-def _enqueue_ner_for_post(db: RedditDatabase, post_id: str, subreddit: str,
-                          detail_post: dict):
-    """Enqueue NER extraction for a post that just had its detail fetched."""
-    created_utc = detail_post.get("created_utc")
-    if isinstance(created_utc, str):
-        try:
-            created_utc = float(created_utc)
-        except (ValueError, TypeError):
-            created_utc = None
-    db.enqueue_ner(
-        source_type="post",
-        source_id=post_id,
-        subreddit=subreddit,
-        created_utc=created_utc,
-    )
 
 
 def _process_tickers():

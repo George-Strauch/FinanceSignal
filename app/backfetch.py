@@ -1,13 +1,13 @@
-"""Backfetch background task — fetch a fixed number of history pages per subreddit.
+"""Backfetch background task — queue-driven historical post collection.
 
-Goes back MAX_PAGES pages on /new/ for each subreddit, upserting every post
-(no seen-before skip). Does not fetch comments — just collects post metadata +
-selftext from the listing. Progress is saved per-subreddit to
-backfetch_progress.json after each page so runs resume across restarts.
+Enqueues listing fetches (source='backfetch') for each subreddit, then drains
+the fetch_queue the same way the scraper does. Unlike the scraper, backfetch
+always paginates up to MAX_PAGES regardless of whether new posts are found
+(metadata refresh). New posts from listings get detail fetches (selftext +
+comments + media) and NER work enqueued — same pipeline as the scraper.
 """
 
 import asyncio
-import json
 import logging
 import time
 from collections import deque
@@ -15,17 +15,11 @@ from dataclasses import dataclass, field
 
 from sentinel.db import RedditDatabase
 from sentinel.fetcher import RedditFetcher
+from app.fetch_processor import FetchCounters, process_listing_row, process_detail_row
 
 logger = logging.getLogger(__name__)
 
-from app.config import DATA_DIR
-
-SUBREDDITS_FILE = DATA_DIR / "subreddits.json"
-
-MAX_PAGES = 10              # Pages to fetch per subreddit per run
-BACKOFF_BASE = 3.0
-BACKOFF_MULT = 5
-MAX_BACKOFFS = 5
+MAX_PAGES = 10
 
 
 @dataclass
@@ -34,35 +28,15 @@ class BackfetchState:
     request_delay: float = 8.0
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     log_buffer: deque = field(default_factory=lambda: deque(maxlen=100))
+    posts_new: int = 0
+    posts_updated: int = 0
+    comments: int = 0
     pages_fetched: int = 0
-    posts_upserted: int = 0
     subs_completed: int = 0
     current_subreddit: str | None = None
-    consec_backoffs: int = 0
+    errors: int = 0
     termination_reason: str | None = None
 
-
-def _parse_subreddits(raw: str) -> list[str]:
-    """Parse comma/space separated subreddit list, stripping r/ prefixes."""
-    subs = []
-    for part in raw.replace(",", " ").split():
-        name = part.strip().removeprefix("r/").removeprefix("/r/")
-        if name:
-            subs.append(name)
-    return subs
-
-
-# ── Auto-select subreddits ─────────────────────────────────────────────
-
-def _auto_select_subreddits() -> list[str]:
-    """Default to all configured subreddits."""
-    if not SUBREDDITS_FILE.exists():
-        return []
-    with open(SUBREDDITS_FILE) as f:
-        return list(json.load(f))
-
-
-# ── Entry point ─────────────────────────────────────────────────────────
 
 async def run_backfetch(state: BackfetchState):
     """Entry point — defaults to all subreddits if none specified."""
@@ -83,129 +57,91 @@ async def run_backfetch(state: BackfetchState):
         len(state.subreddits), MAX_PAGES, state.request_delay,
     )
 
-    await asyncio.to_thread(_backfetch_all, state)
+    await asyncio.to_thread(_run_backfetch, state)
 
     logger.info(
-        "Backfetch done — %d/%d subs, %d posts upserted, %d pages",
+        "Backfetch done — %d/%d subs, %d new posts, %d updated, %d comments, %d pages, %d errors",
         state.subs_completed, len(state.subreddits),
-        state.posts_upserted, state.pages_fetched,
+        state.posts_new, state.posts_updated, state.comments,
+        state.pages_fetched, state.errors,
     )
 
 
-# ── Core loops ──────────────────────────────────────────────────────────
+def _auto_select_subreddits() -> list[str]:
+    from app.config import DATA_DIR
+    from pathlib import Path
+    import json
+    subs_file = DATA_DIR / "subreddits.json"
+    if not subs_file.exists():
+        return []
+    with open(subs_file) as f:
+        return list(json.load(f))
 
-def _backfetch_all(state: BackfetchState):
-    """Iterate subreddits, fetching MAX_PAGES pages for each."""
-    for subreddit in state.subreddits:
-        if state._stop_event.is_set():
-            break
 
-        state.current_subreddit = subreddit
-        state.consec_backoffs = 0
+def _run_backfetch(state: BackfetchState):
+    """Enqueue listing fetches for each subreddit, then drain the queue."""
+    cycle_id = int(time.time())
+    enqueued = 0
 
-        posts_before = state.posts_upserted
-        reason = _backfetch_one(state, subreddit)
-        sub_posts = state.posts_upserted - posts_before
-        state.subs_completed += 1
+    # Enqueue page 1 for each subreddit
+    try:
+        with RedditDatabase() as db:
+            for subreddit in state.subreddits:
+                url = f"https://old.reddit.com/r/{subreddit}/new/"
+                db.enqueue_fetch(
+                    subreddit=subreddit,
+                    url=url,
+                    fetch_type="listing",
+                    page_num=1,
+                    cycle_id=cycle_id,
+                    source="backfetch",
+                )
+                enqueued += 1
+        logger.info("Enqueued %d listing fetches (source=backfetch)", enqueued)
+    except Exception:
+        logger.exception("Failed to enqueue backfetch listings")
+        state.termination_reason = "enqueue_failed"
+        return
 
-        logger.info(
-            "r/%s finished — %s (%d posts this run)",
-            subreddit, reason, sub_posts,
-        )
+    # Drain the queue
+    _drain_backfetch_queue(state, cycle_id)
 
-    state.current_subreddit = None
     if state._stop_event.is_set() and state.termination_reason is None:
         state.termination_reason = "stopped"
     elif state.termination_reason is None:
         state.termination_reason = "completed"
 
 
-def _backfetch_one(state: BackfetchState, subreddit: str) -> str:
-    """Fetch MAX_PAGES pages for a subreddit, upserting every post.
-
-    No seen-before skip — every post on every page gets upserted so the
-    listing fields (score, num_comments) get refreshed. Comments are NOT
-    fetched; this is metadata-only backfill.
-    """
+def _drain_backfetch_queue(state: BackfetchState, cycle_id: int):
+    """Claim and process fetch_queue rows (source='backfetch') until empty."""
     fetcher = RedditFetcher(min_interval=state.request_delay)
-    sub_pages = 0
+    pages_per_sub: dict[str, int] = {}
+    counters = FetchCounters()
 
     with RedditDatabase() as db:
-        after = None
-        while not state._stop_event.is_set() and sub_pages < MAX_PAGES:
-            result = _fetch_page_with_backoff(fetcher, state, subreddit, after)
-            if result is None:
-                return "backoff_exhausted"
+        while not state._stop_event.is_set():
+            row = db.claim_next_fetch(source="backfetch")
+            if row is None:
+                break
 
-            posts = result["posts"]
-            state.pages_fetched += 1
-            sub_pages += 1
+            state.current_subreddit = row["subreddit"]
+            db.mark_fetch_started(row["id"])
 
-            for raw_post in posts:
-                if state._stop_event.is_set():
-                    break
-                try:
-                    post_data = raw_post.get("data", {})
-                    post_id = post_data.get("id", "")
-                    if not post_id:
-                        continue
-                    db.upsert_post(raw_post, subreddit)
-                    state.posts_upserted += 1
-                    media_links = fetcher.extract_media_links(raw_post)
-                    if media_links:
-                        db.save_media_links(post_id, media_links)
-                except Exception:
-                    logger.exception("Post upsert failed for r/%s", subreddit)
+            if row["fetch_type"] == "listing":
+                counters.reset()
+                process_listing_row(db, fetcher, row, "backfetch", cycle_id,
+                                    pages_per_sub, MAX_PAGES, counters)
+                state.posts_new += counters.posts_new
+                state.posts_updated += counters.posts_updated
+                state.pages_fetched += 1
+                state.errors += counters.errors
+            elif row["fetch_type"] == "detail":
+                counters.reset()
+                process_detail_row(db, fetcher, row, counters)
+                state.comments += counters.comments
+                state.errors += counters.errors
+            else:
+                db.mark_fetch_failed(row["id"], f"unknown fetch_type: {row['fetch_type']}")
 
-            db.record_fetch(
-                fetch_type="backfetch",
-                subreddit=subreddit,
-                endpoint=f"/r/{subreddit}/new",
-                items_fetched=len(posts),
-                items_new=0,
-                items_updated=0,
-                duration_seconds=0,
-            )
-
-            logger.info(
-                "r/%s page %d/%d: %d posts upserted",
-                subreddit, sub_pages, MAX_PAGES, len(posts),
-            )
-
-            after = result.get("after")
-            if not after or not posts:
-                return "exhausted"
-
-    if state._stop_event.is_set():
-        return "stopped"
-    return "done"
-
-
-def _fetch_page_with_backoff(fetcher, state, subreddit, after):
-    """Fetch a page with exponential backoff on errors. Returns result dict or None."""
-    while not state._stop_event.is_set():
-        try:
-            result = fetcher.fetch_new_posts(subreddit, limit=100, after=after)
-            state.consec_backoffs = 0
-            return result
-        except Exception as exc:
-            state.consec_backoffs += 1
-            if state.consec_backoffs >= MAX_BACKOFFS:
-                logger.error(
-                    "Backoff exhausted (%d consecutive failures): %s",
-                    state.consec_backoffs, exc,
-                )
-                return None
-
-            wait = BACKOFF_BASE * (BACKOFF_MULT ** (state.consec_backoffs - 1))
-            logger.warning(
-                "Fetch error (attempt %d/%d), backing off %.1fs: %s",
-                state.consec_backoffs, MAX_BACKOFFS, wait, exc,
-            )
-            # Interruptible sleep — poll stop_event every 1s
-            deadline = time.time() + wait
-            while time.time() < deadline:
-                if state._stop_event.is_set():
-                    return None
-                time.sleep(min(1.0, deadline - time.time()))
-    return None
+    state.current_subreddit = None
+    state.subs_completed = len(state.subreddits)

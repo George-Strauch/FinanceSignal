@@ -161,7 +161,7 @@ export default function ProcessMonitor() {
     return () => clearInterval(id)
   }, [selectedJobId, fetchDetail])
 
-  // Fetch queue for reddit_scraper
+  // Fetch queue for reddit_scraper + backfetch
   const [pastLimit, setPastLimit] = useState(50)
   const pastLimitRef = useRef(50)
   pastLimitRef.current = pastLimit
@@ -171,13 +171,13 @@ export default function ProcessMonitor() {
       const data = await get(`/processes/${jobId}/fetch-queue?past_limit=${pastLimitRef.current}`)
       setFetchQueue(data)
     } catch {
-      // 404 for non-scraper jobs — just clear
+      // 404 for non-fetch jobs — just clear
       setFetchQueue(null)
     }
   }, [])
 
   useEffect(() => {
-    if (selectedJobId !== 'reddit_scraper') {
+    if (selectedJobId !== 'reddit_scraper' && selectedJobId !== 'backfetch') {
       setFetchQueue(null)
       setPastLimit(50)
       return
@@ -192,8 +192,8 @@ export default function ProcessMonitor() {
     if (!fetchQueue) return
     if (fetchQueue.past.length >= fetchQueue.past_total) return
     setPastLimit((l) => l + 50)
-    fetchFetchQueue('reddit_scraper')
-  }, [fetchQueue, fetchFetchQueue])
+    fetchFetchQueue(selectedJobId)
+  }, [fetchQueue, fetchFetchQueue, selectedJobId])
 
   // Scroll handler for past table
   const pastTableRef = useRef(null)
@@ -830,7 +830,7 @@ export default function ProcessMonitor() {
     )
   }
 
-  // Fetch Queue rendering (reddit_scraper only)
+  // Fetch Queue rendering (reddit_scraper + backfetch)
   const renderFetchQueue = () => {
     if (!fetchQueue) return null
     const { ready, past, stats } = fetchQueue
@@ -1088,7 +1088,7 @@ export default function ProcessMonitor() {
             <div className="fq-table-wrap" ref={relPastTableRef} onScroll={handleRelPastScroll}>
               <table className="fq-table">
                 <thead>
-                  <tr><th></th><th>Source</th><th>Entity Type</th><th>Entity</th><th>Score</th><th>Status</th><th>Wait Time</th><th>Completed</th><th>Error</th></tr>
+                  <tr><th></th><th>Source</th><th>Entity Type</th><th>Entity</th><th>Score</th><th>Status</th><th>Attempts</th><th>Wait Time</th><th>Completed</th><th>Error</th></tr>
                 </thead>
                 <tbody>
                   {past.map((r) => (
@@ -1099,6 +1099,7 @@ export default function ProcessMonitor() {
                       <td title={r.entity_text}>{r.entity_text}</td>
                       <td>{r.score != null ? r.score.toFixed(3) : '-'}</td>
                       <td className={`fq-status-cell fq-status-${r.status}`}>{r.status}</td>
+                      <td>{r.attempts || 0}</td>
                       <td className="fq-time">{formatDuration(r.enqueued_at, r.completed_at)}</td>
                       <td className="fq-time">{formatTime(r.completed_at)}</td>
                       <td className="fq-error-cell" title={r.error || ''}>{r.error || ''}</td>
