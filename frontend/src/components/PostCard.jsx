@@ -35,9 +35,15 @@ function formatRelativeTime(epoch) {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-function formatFullDate(epoch) {
+function formatUTC(epoch) {
   if (!epoch) return ''
-  return new Date(epoch * 1000).toLocaleString()
+  const d = new Date(epoch * 1000)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const min = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day} ${h}:${min} UTC`
 }
 
 export default function PostCard({ post, highlightTicker }) {
@@ -86,8 +92,9 @@ export default function PostCard({ post, highlightTicker }) {
         <span className="post-card-stat">
           <FiMessageSquare /> {post.num_comments}
         </span>
-        <span className="post-card-time" title={formatFullDate(post.created_utc)}>
+        <span className="post-card-time">
           {formatRelativeTime(post.created_utc)}
+          <span className="post-card-time-utc">{formatUTC(post.created_utc)}</span>
         </span>
       </div>
 

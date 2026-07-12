@@ -41,6 +41,17 @@ function formatRelativeTime(epoch) {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+function formatUTC(epoch) {
+  if (!epoch) return ''
+  const d = new Date(epoch * 1000)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const min = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day} ${h}:${min} UTC`
+}
+
 const SUB_COLORS = [
   '99, 102, 241', '244, 114, 182', '52, 211, 153', '251, 191, 36',
   '96, 165, 250', '167, 139, 250', '248, 113, 113', '45, 212, 191',
@@ -371,6 +382,7 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
                             )}
                             <span className="llm-staged-time">
                               {formatRelativeTime(s.created_utc)}
+                              <span className="llm-staged-time-utc">{formatUTC(s.created_utc)}</span>
                             </span>
                             {s.is_truncated && (
                               <span className="llm-staged-truncated">

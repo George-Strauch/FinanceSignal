@@ -220,6 +220,16 @@
 
 .post-card-time {
   cursor: default;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.post-card-time-utc {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  font-family: monospace;
 }
 
 /* ── Sentiment Dot ───────────────────────────────────────────── */

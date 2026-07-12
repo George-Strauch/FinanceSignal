@@ -901,6 +901,35 @@ export default function TickerDetail() {
         </div>
       )}
 
+      {/* Past LLM Analyses — above posts since posts can be very long */}
+      {llmAnalyses.length > 0 && (
+        <div className="td-llm-analyses-section">
+          <h2>LLM Analyses</h2>
+          <div className="td-llm-analyses-list">
+            {llmAnalyses.map((a) => (
+              <div
+                key={a.id}
+                className={`td-llm-analysis-item ${expandedAnalysis === a.id ? 'expanded' : ''}`}
+                onClick={() => setExpandedAnalysis(expandedAnalysis === a.id ? null : a.id)}
+              >
+                <div className="td-llm-analysis-header">
+                  <span className="td-llm-analysis-model">{a.model.split('/').pop()}</span>
+                  <span className="td-llm-analysis-date">
+                    {new Date(a.created_at_iso).toLocaleString()}
+                  </span>
+                  <span className="td-llm-analysis-posts">{a.post_count} posts</span>
+                </div>
+                {expandedAnalysis === a.id && (
+                  <div className="td-llm-analysis-body">
+                    <PastAnalysis id={a.id} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Bottom Tabs: Posts / By Author */}
       <div className="td-bottom-tabs">
         <button
@@ -970,35 +999,6 @@ export default function TickerDetail() {
               })}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Past LLM Analyses */}
-      {llmAnalyses.length > 0 && (
-        <div className="td-llm-analyses-section">
-          <h2>LLM Analyses</h2>
-          <div className="td-llm-analyses-list">
-            {llmAnalyses.map((a) => (
-              <div
-                key={a.id}
-                className={`td-llm-analysis-item ${expandedAnalysis === a.id ? 'expanded' : ''}`}
-                onClick={() => setExpandedAnalysis(expandedAnalysis === a.id ? null : a.id)}
-              >
-                <div className="td-llm-analysis-header">
-                  <span className="td-llm-analysis-model">{a.model.split('/').pop()}</span>
-                  <span className="td-llm-analysis-date">
-                    {new Date(a.created_at_iso).toLocaleString()}
-                  </span>
-                  <span className="td-llm-analysis-posts">{a.post_count} posts</span>
-                </div>
-                {expandedAnalysis === a.id && (
-                  <div className="td-llm-analysis-body">
-                    <PastAnalysis id={a.id} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
