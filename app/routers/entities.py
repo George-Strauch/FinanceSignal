@@ -143,24 +143,27 @@ def search_entities(
 
 @router.get("/top")
 def top_entities(
-    window: EntityWindow = EntityWindow.d7,
+    window: EntityWindow | None = None,
     label: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     db: RedditDatabase = Depends(get_db),
 ):
-    cutoff = _cutoff(window.value)
-
-    where = ["created_utc >= ?"]
-    params: list = [cutoff]
+    # window=None means all-time (no created_utc filter)
+    where: list[str] = []
+    params: list = []
+    if window is not None:
+        where.append("created_utc >= ?")
+        params.append(_cutoff(window.value))
     if label and label != "all":
         where.append("entity_label = ?")
         params.append(label)
 
-    where_clause = "WHERE " + " AND ".join(where)
+    where_clause = ("WHERE " + " AND ".join(where)) if where else ""
 
     rows = db.conn.execute(f"""
         SELECT entity_text, entity_label, COUNT(*) AS mention_count,
-               COUNT(DISTINCT subreddit) AS subreddit_count
+               COUNT(DISTINCT subreddit) AS subreddit_count,
+               MAX(created_utc) AS last_seen
         FROM named_entities
         {where_clause}
         GROUP BY entity_text, entity_label
@@ -172,24 +175,33 @@ def top_entities(
     entity_keys = [(r["entity_text"], r["entity_label"]) for r in rows]
     sub_map: dict[str, dict[str, int]] = {}
     if entity_keys:
-        # Build WHERE clause for entity text/label pairs
         pair_clauses = " OR ".join(["(entity_text = ? AND entity_label = ?)"] * len(entity_keys))
         pair_params = []
         for text, lbl in entity_keys:
             pair_params.extend([text, lbl])
 
+        sub_where = "WHERE " if where else ""
+        sub_where_parts = []
+        sub_params: list = []
+        if window is not None:
+            sub_where_parts.append("created_utc >= ?")
+            sub_params.append(_cutoff(window.value))
+        sub_where_parts.append(f"({pair_clauses})")
+        sub_params.extend(pair_params)
+        sub_where = "WHERE " + " AND ".join(sub_where_parts)
+
         sub_rows = db.conn.execute(f"""
             SELECT entity_text, subreddit, COUNT(*) AS cnt
             FROM named_entities
-            WHERE created_utc >= ? AND ({pair_clauses})
+            {sub_where}
             GROUP BY entity_text, subreddit
             ORDER BY cnt DESC
-        """, [cutoff, *pair_params]).fetchall()
+        """, sub_params).fetchall()
         for sr in sub_rows:
             sub_map.setdefault(sr["entity_text"], {})[sr["subreddit"]] = sr["cnt"]
 
     return {
-        "window": window.value,
+        "window": window.value if window else "all",
         "entities": [
             {
                 "entity_text": r["entity_text"],
@@ -197,6 +209,7 @@ def top_entities(
                 "label_display": LABEL_DISPLAY.get(r["entity_label"], r["entity_label"]),
                 "mention_count": r["mention_count"],
                 "subreddit_count": r["subreddit_count"],
+                "last_seen": r["last_seen"],
                 "subreddits": sub_map.get(r["entity_text"], {}),
             }
             for r in rows

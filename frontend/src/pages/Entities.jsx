@@ -5,8 +5,6 @@ import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import './Entities.css'
 
-const WINDOWS = ['1d', '7d', '30d', '90d']
-
 const LABEL_FILTERS = [
   { value: 'all', display: 'All' },
   { value: 'PERSON', display: 'People' },
@@ -18,32 +16,47 @@ const LABEL_FILTERS = [
   { value: 'NORP', display: 'Groups' },
 ]
 
+const SORT_OPTIONS = [
+  { value: 'mention_count', label: 'Occurrences' },
+  { value: 'last_seen', label: 'Last Seen' },
+  { value: 'entity_text', label: 'Alphabetical' },
+]
+
+function formatRelative(unixTs) {
+  if (!unixTs) return '—'
+  const diff = Math.floor((Date.now() / 1000) - unixTs)
+  if (diff < 0) return 'just now'
+  if (diff < 60) return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`
+  return `${Math.floor(diff / 2592000)}mo ago`
+}
+
 export default function Entities() {
   const navigate = useNavigate()
-  const [window, setWindow] = usePersistedState('entities-window', '7d')
   const [label, setLabel] = usePersistedState('entities-label', 'all')
+  const [sortKey, setSortKey] = usePersistedState('entities-sort', 'mention_count')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [stats, setStats] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState(null)
-  const [sortKey, setSortKey] = useState('mention_count')
-  const [sortDir, setSortDir] = useState('desc')
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const labelParam = label !== 'all' ? `&label=${label}` : ''
-      const res = await get(`/entities/top?window=${window}&limit=100${labelParam}`)
+      const res = await get(`/entities/top?limit=200${labelParam}`)
       setData(res)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [window, label])
+  }, [label])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -68,28 +81,13 @@ export default function Entities() {
     return () => clearTimeout(timeout)
   }, [searchQuery, label])
 
-  const handleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir('desc')
-    }
-  }
-
-  const sortIndicator = (key) => {
-    if (sortKey !== key) return ''
-    return sortDir === 'asc' ? ' \u25B2' : ' \u25BC'
-  }
-
   const entities = searchResults || data?.entities || []
   const sortedEntities = [...entities].sort((a, b) => {
-    const aVal = a[sortKey]
-    const bVal = b[sortKey]
-    if (typeof aVal === 'string') {
-      return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
+    const dir = sortKey === 'entity_text' ? 1 : -1
+    if (sortKey === 'entity_text') {
+      return a.entity_text.localeCompare(b.entity_text)
     }
-    return sortDir === 'asc' ? aVal - bVal : bVal - aVal
+    return (a[sortKey] ?? 0) - (b[sortKey] ?? 0) > 0 ? dir : -dir
   })
 
   const isEmpty = !loading && entities.length === 0
@@ -99,19 +97,6 @@ export default function Entities() {
       <div className="entities-header">
         <div className="entities-title-row">
           <h1>Named Entities</h1>
-        </div>
-        <div className="entities-controls">
-          <div className="window-selector">
-            {WINDOWS.map((w) => (
-              <button
-                key={w}
-                className={`window-btn ${window === w ? 'active' : ''}`}
-                onClick={() => setWindow(w)}
-              >
-                {w}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -148,15 +133,29 @@ export default function Entities() {
             </button>
           ))}
         </div>
-        <div className="entities-search-wrap">
-          <FiSearch className="entities-search-icon" />
-          <input
-            type="text"
-            className="entities-search-input"
-            placeholder="Search entities..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+        <div className="entities-controls-right">
+          <div className="entities-sort-wrap">
+            <span className="entities-sort-label">Sort</span>
+            <select
+              className="entities-sort-select"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value)}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="entities-search-wrap">
+            <FiSearch className="entities-search-icon" />
+            <input
+              type="text"
+              className="entities-search-input"
+              placeholder="Search entities..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -177,8 +176,8 @@ export default function Entities() {
       {isEmpty && (
         <div className="entities-empty">
           <FiUsers className="entities-empty-icon" />
-          <p>No entities found for this window.</p>
-          <p className="entities-empty-hint">Run the NER Extraction process first, or try a wider time window.</p>
+          <p>No entities found.</p>
+          <p className="entities-empty-hint">Run the NER Extraction process to populate entity data.</p>
         </div>
       )}
 
@@ -188,13 +187,10 @@ export default function Entities() {
             <thead>
               <tr>
                 <th>#</th>
-                <th className="sortable" onClick={() => handleSort('entity_text')}>
-                  Entity{sortIndicator('entity_text')}
-                </th>
+                <th>Entity</th>
                 <th>Type</th>
-                <th className="sortable" onClick={() => handleSort('mention_count')}>
-                  Mentions{sortIndicator('mention_count')}
-                </th>
+                <th>Occurrences</th>
+                <th>Last Seen</th>
                 <th>Subreddits</th>
               </tr>
             </thead>
@@ -212,7 +208,8 @@ export default function Entities() {
                       {e.label_display || e.entity_label}
                     </span>
                   </td>
-                  <td>{e.mention_count.toLocaleString()}</td>
+                  <td>{(e.mention_count ?? 0).toLocaleString()}</td>
+                  <td className="entity-last-seen-cell">{formatRelative(e.last_seen)}</td>
                   <td>
                     {e.subreddits && typeof e.subreddits === 'object' && !Array.isArray(e.subreddits) ? (
                       <div className="entity-sub-chips">
