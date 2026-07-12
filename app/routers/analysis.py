@@ -33,7 +33,7 @@ This is likely a spike in activity. Identify what drove it.
 
 Format:
 ## Catalyst
-What event or news drove the spike? Be specific — earnings beat/miss, product launch, regulatory decision, analyst upgrade/downgrade, macro event. One to three sentences max.
+What event or news drove the spike? Be specific — earnings beat/miss, product launch, regulatory decision, analyst upgrade/downgrade, macro event, or an emerging thesis (e.g. "datacenter memory demand outpacing supply"). One to three sentences max.
 
 ## Bull Case
 The strongest arguments for the stock, stated as terse bullets. Hard numbers only (revenue, EPS, guidance, price targets). Attribute to u/username. No folklore, no personal gain stories, no meme narratives.
@@ -52,7 +52,7 @@ One line. Bullish / bearish / mixed. Brief why.
 
 Rules:
 - Every sentence must contain information. Cut all filler, narrative padding, recaps, and transitions.
-- Do not describe what posts "discuss" or "mention" — state the content directly.
+- State the content of posts directly. Do not say "users discussed X" or "posts mentioned Y" — just say X or Y.
 - Do not include personal trading stories, legendary posters, or community folklore.
 - Cite u/username for each non-obvious claim.
 - Use bullet points. Avoid paragraphs."""
@@ -82,9 +82,15 @@ INJECTION_CAP = 15
 
 AVAILABLE_MODELS = [
     {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4", "supports_tools": True},
+    {"id": "anthropic/claude-opus-4.6", "label": "Claude Opus 4.6", "supports_tools": True},
+    {"id": "anthropic/claude-opus-4.8", "label": "Claude Opus 4.8", "supports_tools": True},
     {"id": "openai/gpt-4o", "label": "GPT-4o", "supports_tools": True},
+    {"id": "openai/o4-mini", "label": "o4-mini", "supports_tools": True},
+    {"id": "openai/o3", "label": "o3", "supports_tools": True},
     {"id": "google/gemini-2.5-pro", "label": "Gemini 2.5 Pro", "supports_tools": True},
     {"id": "anthropic/claude-opus-4", "label": "Claude Opus 4", "supports_tools": True},
+    {"id": "z-ai/glm-5.2", "label": "GLM-5.2", "supports_tools": True},
+    {"id": "deepseek/deepseek-r1", "label": "DeepSeek R1", "supports_tools": True},
     {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini", "supports_tools": True},
 ]
 

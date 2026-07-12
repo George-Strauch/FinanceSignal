@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { FiX, FiArrowUp, FiMessageSquare, FiExternalLink, FiSend, FiLoader, FiCheck } from 'react-icons/fi'
+import { FiX, FiArrowUp, FiMessageSquare, FiExternalLink, FiSend, FiLoader, FiCheck, FiChevronUp, FiChevronDown } from 'react-icons/fi'
 import ReactMarkdown from 'react-markdown'
 import { get, post } from '../api/client'
 import './LLMAnalysisModal.css'
@@ -10,7 +10,7 @@ This is likely a spike in activity. Identify what drove it.
 
 Format:
 ## Catalyst
-What event or news drove the spike? Be specific — earnings beat/miss, product launch, regulatory decision, analyst upgrade/downgrade, macro event. One to three sentences max.
+What event or news drove the spike? Be specific — earnings beat/miss, product launch, regulatory decision, analyst upgrade/downgrade, macro event, or an emerging thesis (e.g. "datacenter memory demand outpacing supply"). One to three sentences max.
 
 ## Bull Case
 The strongest arguments for the stock, stated as terse bullets. Hard numbers only (revenue, EPS, guidance, price targets). Attribute to u/username. No folklore, no personal gain stories, no meme narratives.
@@ -29,7 +29,7 @@ One line. Bullish / bearish / mixed. Brief why.
 
 Rules:
 - Every sentence must contain information. Cut all filler, narrative padding, recaps, and transitions.
-- Do not describe what posts "discuss" or "mention" — state the content directly.
+- State the content of posts directly. Do not say "users discussed X" or "posts mentioned Y" — just say X or Y.
 - Do not include personal trading stories, legendary posters, or community folklore.
 - Cite u/username for each non-obvious claim.
 - Use bullet points. Avoid paragraphs.`
@@ -107,6 +107,7 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
   const [savedId, setSavedId] = useState(null)
   const [toolsEnabled, setToolsEnabled] = useState(false)
   const [toolActivity, setToolActivity] = useState([])
+  const [promptCollapsed, setPromptCollapsed] = useState(false)
   const streamRef = useRef(null)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
 
@@ -317,13 +318,20 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
               </div>
 
               <div className="llm-config-group llm-prompt-group">
-                <label className="llm-config-label">System Prompt</label>
-                <textarea
-                  className="llm-system-prompt"
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  rows={5}
-                />
+                <div className="llm-prompt-header" onClick={() => setPromptCollapsed(!promptCollapsed)}>
+                  <label className="llm-config-label">System Prompt</label>
+                  <button className="llm-prompt-toggle" type="button">
+                    {promptCollapsed ? <FiChevronDown /> : <FiChevronUp />}
+                  </button>
+                </div>
+                {!promptCollapsed && (
+                  <textarea
+                    className="llm-system-prompt"
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    rows={10}
+                  />
+                )}
               </div>
 
               <div className="llm-tools-toggle">

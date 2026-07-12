@@ -159,6 +159,34 @@
   flex: 1;
 }
 
+.llm-prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.llm-prompt-header:hover .llm-config-label {
+  color: rgb(var(--accent));
+}
+
+.llm-prompt-toggle {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: rgb(var(--soft-text));
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.85rem;
+}
+
+.llm-prompt-toggle:hover {
+  color: rgb(var(--accent));
+}
+
 .llm-system-prompt {
   width: 100%;
   background: rgb(var(--secondary-color));
