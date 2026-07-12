@@ -807,6 +807,7 @@ export default function ProcessMonitor() {
   // Generic job detail rendering
   const renderGenericDetail = () => {
     if (!jobDetail) return null
+    const m = jobDetail.monitor
     return (
       <div className="dash-card">
         <h2>Job Details</h2>
@@ -824,6 +825,98 @@ export default function ProcessMonitor() {
               <span className="detail-field-label">Error</span>
               <span className="detail-field-value detail-error">{jobDetail.error}</span>
             </div>
+          )}
+          {m && (
+            <>
+              <div className="detail-field">
+                <span className="detail-field-label">Phase</span>
+                <span className="detail-field-value">{m.current_phase || '—'}</span>
+              </div>
+              {m.sources_processed != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Sources Processed</span>
+                  <span className="detail-field-value">{m.sources_processed.toLocaleString()}</span>
+                </div>
+              )}
+              {m.entities_found != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Entities Found</span>
+                  <span className="detail-field-value">{m.entities_found.toLocaleString()}</span>
+                </div>
+              )}
+              {m.tickers_found != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Tickers Found</span>
+                  <span className="detail-field-value">{m.tickers_found.toLocaleString()}</span>
+                </div>
+              )}
+              {m.relevance_enqueued != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Relevance Enqueued</span>
+                  <span className="detail-field-value">{m.relevance_enqueued.toLocaleString()}</span>
+                </div>
+              )}
+              {m.pairs_scored != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Pairs Scored</span>
+                  <span className="detail-field-value">{m.pairs_scored.toLocaleString()}</span>
+                </div>
+              )}
+              {m.pairs_requeued != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Pairs Requeued</span>
+                  <span className="detail-field-value">{m.pairs_requeued.toLocaleString()}</span>
+                </div>
+              )}
+              {m.pairs_failed != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Pairs Failed</span>
+                  <span className="detail-field-value">{m.pairs_failed.toLocaleString()}</span>
+                </div>
+              )}
+              {m.ticker_pairs_enqueued != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Ticker Pairs Enqueued</span>
+                  <span className="detail-field-value">{m.ticker_pairs_enqueued.toLocaleString()}</span>
+                </div>
+              )}
+              {m.ner_pairs_enqueued != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">NER Pairs Enqueued</span>
+                  <span className="detail-field-value">{m.ner_pairs_enqueued.toLocaleString()}</span>
+                </div>
+              )}
+              {m.posts_new != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Posts New</span>
+                  <span className="detail-field-value">{m.posts_new.toLocaleString()}</span>
+                </div>
+              )}
+              {m.posts_updated != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Posts Updated</span>
+                  <span className="detail-field-value">{m.posts_updated.toLocaleString()}</span>
+                </div>
+              )}
+              {m.pages_fetched != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Pages Fetched</span>
+                  <span className="detail-field-value">{m.pages_fetched.toLocaleString()}</span>
+                </div>
+              )}
+              {m.errors != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Errors</span>
+                  <span className="detail-field-value">{m.errors.toLocaleString()}</span>
+                </div>
+              )}
+              {m.empty_polls != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Empty Polls</span>
+                  <span className="detail-field-value">{m.empty_polls.toLocaleString()}</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1161,7 +1254,7 @@ export default function ProcessMonitor() {
           {renderConfigEditor()}
           {renderScheduleStatus()}
           {renderParamInputs()}
-          {jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
+          {selectedJobId === 'reddit_scraper' && jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
           {renderFetchQueue()}
           {renderNerQueue()}
           {renderRelevanceQueue()}
