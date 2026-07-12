@@ -240,7 +240,7 @@ def _histogram_label(bucket: str, granularity: str) -> str:
         return dt.strftime("%b %d, %I:00 %p")
     elif granularity == "week":
         dt = datetime.strptime(bucket, "%Y-%m-%d")
-        return dt.strftime("Week of %b %d")
+        return dt.strftime("%b %d")
     elif granularity == "month":
         dt = datetime.strptime(bucket, "%Y-%m")
         return dt.strftime("%b %Y")
