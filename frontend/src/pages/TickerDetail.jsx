@@ -944,6 +944,17 @@ export default function TickerDetail() {
                   tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
                   stroke="rgba(var(--soft-border), 0.5)"
                 />
+                {mentionOverlay && (
+                  <YAxis
+                    orientation="right"
+                    allowDecimals={false}
+                    tick={false}
+                    tickLine={false}
+                    axisLine={false}
+                    width={50}
+                    domain={[0, 'auto']}
+                  />
+                )}
                 <Tooltip
                   contentStyle={{
                     background: 'rgb(var(--primary-color))',
