@@ -792,7 +792,8 @@ async def stream_analysis(
                 user_prompt=user_prompt,
                 response=full_response,
                 post_count=len(posts),
-                staged_posts=posts,
+                staged_posts=[{"id": p["id"], "type": "comment" if p.get("type") == "comment" else "post"}
+                              for p in posts],
             )
             yield f'data: {json.dumps({"done": True, "analysis_id": analysis_id})}\n\n'
 

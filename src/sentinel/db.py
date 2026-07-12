@@ -1251,12 +1251,65 @@ class RedditDatabase:
         staged = result.get("staged_posts")
         if staged:
             try:
-                result["staged_posts"] = json.loads(staged)
+                refs = json.loads(staged)
             except (json.JSONDecodeError, TypeError):
-                result["staged_posts"] = []
+                refs = []
+            result["staged_posts"] = self._resolve_staged_post_refs(refs)
         else:
             result["staged_posts"] = []
         return result
+
+    def _resolve_staged_post_refs(self, refs: list) -> list[dict]:
+        """Resolve [{id, type}] refs to full post/comment data from DB."""
+        resolved = []
+        for ref in refs:
+            source_id = ref.get("id")
+            source_type = ref.get("type", "post")
+            if not source_id:
+                continue
+            if source_type == "comment":
+                row = self.conn.execute(
+                    """SELECT c.id, c.body, c.author, c.score, c.created_utc,
+                              c.post_id, p.subreddit, p.title as post_title
+                       FROM comments c
+                       JOIN posts p ON c.post_id = p.id
+                       WHERE c.id = ?""",
+                    (source_id,),
+                ).fetchone()
+                if row:
+                    d = dict(row)
+                    resolved.append({
+                        "id": d["id"],
+                        "type": "comment",
+                        "title": d.get("post_title", ""),
+                        "body": d["body"] or "",
+                        "author": d["author"],
+                        "subreddit": d["subreddit"],
+                        "score": d["score"],
+                        "created_utc": d["created_utc"],
+                        "reddit_url": f"https://reddit.com/r/{d['subreddit']}/comments/{d['post_id']}",
+                    })
+            else:
+                row = self.conn.execute(
+                    """SELECT id, title, selftext, author, subreddit,
+                              score, num_comments, created_utc
+                       FROM posts WHERE id = ?""",
+                    (source_id,),
+                ).fetchone()
+                if row:
+                    d = dict(row)
+                    resolved.append({
+                        "id": d["id"],
+                        "type": "post",
+                        "title": d["title"],
+                        "body": d["selftext"] or "",
+                        "author": d["author"],
+                        "subreddit": d["subreddit"],
+                        "score": d["score"],
+                        "created_utc": d["created_utc"],
+                        "reddit_url": f"https://reddit.com/r/{d['subreddit']}/comments/{d['id']}",
+                    })
+        return resolved
 
     def create_bot_strategy(self, bot_id: str, title: str, description: str = "",
                             color: str = "#6366f1") -> dict:
