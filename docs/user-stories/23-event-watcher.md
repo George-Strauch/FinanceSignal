@@ -8,6 +8,8 @@
 
 Add a `watchlist_events` database table and an "Events" page in the sidebar. Events are forward-looking market signals — mergers, earnings, regulatory decisions, Fed announcements — that the LLM discovers during post analysis and manages via tool calls (create, update, resolve). Every event links back to the Reddit posts that sourced it. The UI surfaces active events with related tickers, expected update timelines, source posts, and resolution status, and gives the human curation controls (resolve/dismiss) to keep the list clean.
 
+A `web_search` tool lets the LLM pull live internet context (news, filings, current event status) to enrich both the analysis and the event records. All tool calls — event management and web search — are gated by a single "Enable Analysis Tools" checkbox that **defaults to false**, so historical "why did this happen" tests run as plain text analysis with no injected context, no tools, and no DB side-effects.
+
 ## Motivation
 
 Right now, the LLM analysis module produces a one-shot summary of "why is this ticker trending." That summary is ephemeral — it lives in the DB as text but doesn't feed back into the system. The natural next step is to let the LLM extract **actionable, forward-looking signals** from the posts it reads and persist them as structured events we can track over time.
@@ -32,10 +34,11 @@ The quality bar is: **would a real trader adjust their position or watch list ba
 The single biggest production risk is watchlist bloat: LLMs given tools tend to use them, and over weeks of analysis sessions the table fills with duplicates, near-duplicates, stale never-resolved events, and marginal noise. Every design decision below is filtered through this risk. The defenses, in order of importance:
 
 1. **Context injection over voluntary search.** The backend knows which ticker is being analyzed. Before streaming, it injects that ticker's existing events (active + recently closed) directly into the prompt, with their IDs. The LLM sees what already exists *before* deciding anything — duplicates are prevented by construction, not by hoping the model remembers to call `search_events`. It also lets the model call `update_event`/`resolve_event` with IDs directly, no search round-trip.
-2. **Hard server-side caps.** Max **5 `create_event` calls per analysis** and max **8 tool round-trips per session**, enforced in the backend. Excess calls return an error message to the LLM ("creation limit reached for this session"). Prompt instructions are a soft defense; caps are the hard one.
+2. **Hard server-side caps.** Max **5 `create_event` calls**, **5 `web_search` calls**, and **8 total tool round-trips per session**, enforced in the backend. Excess calls return an error message to the LLM ("creation limit reached for this session"). Prompt instructions are a soft defense; caps are the hard one.
 3. **Dismissed events stay visible to the LLM.** Human curation (dismiss) doesn't delete — dismissed events remain in search results and context injection, marked "dismissed as noise — do not recreate." Deleting junk would just let the LLM recreate it next session.
 4. **Temporal awareness.** Analyses can run on historical dates (story 22). The prompt must state today's date and the date range of the posts being analyzed, with explicit rules: events that already concluded before today are created as `discovered_and_resolved` or not created at all; never create an "upcoming" event whose date is already past.
 5. **Human curation is first-class.** The UI makes resolve/dismiss one click. A watchlist the human can't cheaply prune will rot.
+6. **Tools default off.** The "Enable Analysis Tools" checkbox defaults to false. When off, the backend sends no tools, injects no existing events, and appends no tool context to the prompt — the analysis runs as a plain text completion, saving tokens and preventing historical "why did this happen" tests from creating stale events. When on, all tools (event CRUD + web search) and context injection are active.
 
 ---
 
@@ -140,9 +143,11 @@ Actions: `created`, `context_appended`, `tickers_added`, `expected_update_added`
 
 ## Context Injection
 
-The core anti-bloat mechanism. Before the streaming request, the backend fetches events relevant to the analysis and injects a compact block into the prompt:
+Only performed when "Enable Analysis Tools" is on. When off, no events are injected and the prompt contains zero tool-related context — the LLM does a plain text analysis with no watchlist awareness. This is the default, designed for historical "why did this happen" tests that should not create or modify events with out-of-date data.
 
-**Selection** (capped at ~15 events, ticker-specific first, then macro by recency):
+When on, the backend fetches events relevant to the analysis and injects a compact block into the prompt:
+
+**Selection** (hard cap of **15 events**, ticker-specific first, then macro by recency):
 1. Events where the analyzed ticker is in `related_tickers` — any status, closed ones only from the last 60 days
 2. Macro events (`related_tickers = []`) with status `active`
 
@@ -170,7 +175,7 @@ Consequences:
 
 ### Model Selection
 
-Not all models support tool calling. When "Enable Event Tools" is on, the model dropdown filters to tool-capable models. The `/api/analysis/models` endpoint gains a `supports_tools` flag per model (hardcoded list in `analysis.py`):
+Not all models support tool calling. When "Enable Analysis Tools" is on, the model dropdown filters to tool-capable models. The `/api/analysis/models` endpoint gains a `supports_tools` flag per model (hardcoded list in `analysis.py`):
 
 | Model | Tools | Notes |
 |-------|-------|-------|
@@ -182,7 +187,7 @@ Not all models support tool calling. When "Enable Event Tools" is on, the model 
 
 ### Tool Definitions
 
-Four tools, OpenAI-compatible function definitions:
+Five tools, OpenAI-compatible function definitions. All are sent only when "Enable Analysis Tools" is on; when off, the `tools` array is omitted entirely:
 
 #### 1. `search_events`
 
@@ -289,7 +294,66 @@ Cannot modify `summary`, cannot rewrite `context`, cannot remove anything. Rejec
 }
 ```
 
-### System Prompt Additions (when event tools enabled)
+#### 5. `web_search`
+
+Search the internet for current information to enrich the analysis and event records. Used for: verifying claims from posts, finding the current status of an event ("did the Cox-Charter merger close yet?"), getting additional context on a ticker, or checking macro conditions.
+
+```json
+{
+  "name": "web_search",
+  "description": "Search the web for current information to enhance your analysis. Use for: verifying claims from posts, finding the current status of events, getting additional context on a ticker or macro topic. Returns titles and snippets from top results. Limit: 5 per session.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query: 'NVDA Blackwell delay latest news', 'Cox Charter merger status 2026', 'Fed FOMC July 2026 rate decision'"
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Max results to return (1-5). Default 3.",
+        "default": 3
+      }
+    },
+    "required": ["query"]
+  }
+}
+```
+
+**Backend**: Calls [Tavily API](https://tavily.com) (designed for AI/LLM use, returns clean titles + snippets, not raw HTML). Requires `TAVILY_API_KEY` in the vault `.env`. Request format:
+
+```python
+POST https://api.tavily.com/search
+{
+    "query": "...",
+    "api_key": TAVILY_API_KEY,
+    "search_depth": "basic",
+    "max_results": 3,
+    "include_answer": true
+}
+```
+
+Returns to the LLM as a tool result:
+
+```json
+{
+  "answer": "The Cox-Charter merger received DOJ antitrust approval on July 15, 2026...",
+  "results": [
+    {"title": "DOJ approves Cox-Charter merger", "url": "...", "content": "snippet..."},
+    {"title": "Charter Communications stock jumps on merger approval", "url": "...", "content": "snippet..."}
+  ]
+}
+```
+
+The `include_answer: true` parameter gives Tavily's synthesized answer first — often enough for the LLM without reading individual results. The LLM can decide whether the snippets suffice or it needs to reason further.
+
+**Session cap**: max 5 `web_search` calls per session (same as `create_event`). Total tool round-trips capped at 8 (see below).
+
+**Search results are ephemeral** — not stored in the DB. They are context for the current analysis only. The LLM's synthesis of the results lives in the analysis response text and any event context it creates. If a search result informed an event, the LLM should summarize it into the event's `context` field, not reference the URL.
+
+**Historical use**: web search is valuable for retrospective analyses. The LLM can search "what happened with NVDA in May 2025" to provide a "here's what the posts were saying vs. what actually happened" analysis. But since it's gated by the same checkbox that enables event creation, the user must explicitly opt in — historical tests stay clean by default.
+
+### System Prompt Additions (when tools enabled)
 
 Appended to the analysis system prompt:
 
@@ -302,15 +366,16 @@ Appended to the analysis system prompt:
 > - If an event described in the posts has already concluded relative to today's date, create it with already_resolved=true or skip it — never create an "upcoming" event whose date is already past.
 > - If posts indicate an active event from your context has concluded, resolve it.
 > - Use search_events only to check for events that might exist under other tickers or as macro events.
+> - You have a web_search tool to look up current information. Use it to verify claims, find the status of events, or get additional context. Be judicious — limit yourself to the most important queries. Summarize search findings into your analysis or event context; do not paste URLs.
 
 ### Tool Call Flow
 
-1. User stages posts and runs analysis with "Enable Event Tools" on
-2. Backend builds the prompt: staged posts (now including their IDs) + injected event context + system prompt additions
-3. Request sent with `tools`, `tool_choice: "auto"`, `stream: true`
-4. LLM streams analysis text and makes tool calls; backend executes them and feeds results back (multi-turn, see Technical Notes)
-5. Hard limits: 5 creates, 8 tool round-trips per session
-6. On completion, the modal shows a summary of events created/updated/resolved
+1. User stages posts and runs analysis. "Enable Analysis Tools" checkbox defaults to **unchecked**.
+2. **If unchecked**: backend sends a plain request with no `tools`, no injected events, no tool context in the prompt. The LLM does a standard text analysis. No events are created, updated, or resolved. No web searches occur. This is the default — saves tokens, prevents stale-data bloat on historical tests.
+3. **If checked**: backend builds the prompt with staged posts (including IDs) + injected event context (hard cap 15) + system prompt additions. Request sent with all five tools, `tool_choice: "auto"`, `stream: true`.
+4. LLM streams analysis text and makes tool calls (events + web search); backend executes them and feeds results back (multi-turn, see Technical Notes)
+5. Hard limits: 5 `create_event` per session, 5 `web_search` per session, 8 total tool round-trips per session
+6. On completion, the modal shows a summary of events created/updated/resolved and web searches performed
 
 ---
 
@@ -338,10 +403,11 @@ No manual event creation form. Curation (resolve/dismiss) is essential; creation
 
 ### LLM Analysis Modal Changes
 
-- **"Enable Event Tools"** toggle in the config section
-- When on: model dropdown filters to tool-capable models; tool definitions + prompt additions sent
-- During streaming: tool calls rendered inline as compact activity lines ("Created event: Cox-Charter merger...")
-- After completion: summary panel ("Created 2, updated 1, resolved 0") with links to the Events page
+- **"Enable Analysis Tools"** checkbox in the config section, **unchecked by default**
+- When unchecked: plain text analysis — no tools, no event context, no extra tokens. A tooltip explains: "Enables event tracking and web search tools. Off by default to keep historical tests clean and save tokens."
+- When checked: model dropdown filters to tool-capable models; all five tools + context injection + prompt additions sent
+- During streaming: tool calls rendered inline as compact activity lines ("Created event: Cox-Charter merger...", "Web search: Cox Charter merger status", "Resolved event: #12")
+- After completion: summary panel ("Created 2, updated 1, resolved 0, 3 web searches") with links to the Events page
 
 ---
 
@@ -369,18 +435,20 @@ No `POST /api/events` (no manual creation) and no free-form `PUT` (LLM edits are
 - [ ] `expected_updates` / `change_log` stored as valid JSON
 
 ### Bloat Control
-- [ ] Ticker-relevant events injected into the prompt with IDs (capped at ~15)
-- [ ] Create cap (5/session) and round-trip cap (8/session) enforced server-side
+- [ ] "Enable Analysis Tools" checkbox defaults to unchecked; when off, no tools, no injection, no tool context in prompt
+- [ ] Ticker-relevant events injected into the prompt with IDs (hard cap 15) — only when tools enabled
+- [ ] Create cap (5/session), web_search cap (5/session), total round-trip cap (8/session) enforced server-side
 - [ ] `source_ids` validated against the staged set; creates with no valid sources rejected
 - [ ] Dismissed events appear in injection/search as "do not recreate"
 - [ ] Prompt includes today's date + analysis date range; past events handled via `already_resolved`
 - [ ] Stale (overdue) active events flagged at query time and noted in injection
 
 ### LLM Tool Integration
-- [ ] "Enable Event Tools" toggle; model dropdown filters to tool-capable models
-- [ ] All four tools execute against the DB with results fed back to the LLM
+- [ ] "Enable Analysis Tools" checkbox; model dropdown filters to tool-capable models when checked
+- [ ] All five tools execute (4 event tools + web_search) with results fed back to the LLM
+- [ ] `web_search` calls Tavily API, returns answer + snippets to LLM; results are ephemeral (not stored)
 - [ ] `update_event` cannot modify summary, rewrite context, or touch dismissed events
-- [ ] Tool activity rendered inline during streaming; post-analysis summary panel shown
+- [ ] Tool activity (including web searches) rendered inline during streaming; post-analysis summary panel shown
 
 ### Events Page
 - [ ] Route `/events` with sidebar entry
@@ -396,7 +464,11 @@ No `POST /api/events` (no manual creation) and no free-form `PUT` (LLM edits are
 
 ### Staged posts need IDs in the prompt
 
-`stream_analysis` currently builds `prompt_items` without the `id` field (app/routers/analysis.py:230). When event tools are enabled, each item must include its `id` so the LLM can cite `source_ids`. The backend keeps a `{id -> (type, id)}` map of the staged set for validation.
+`stream_analysis` currently builds `prompt_items` without the `id` field (app/routers/analysis.py:230). When analysis tools are enabled, each item must include its `id` so the LLM can cite `source_ids`. The backend keeps a `{id -> (type, id)}` map of the staged set for validation.
+
+### Tavily API Key
+
+Add `TAVILY_API_KEY` to the vault `.env` (loaded alongside `OPENROUTER_API_KEY` via `config.py`'s `_load_env()`). Sign up at [tavily.com](https://tavily.com) — free tier includes 1,000 searches/month, sufficient for development. The key is not needed when "Enable Analysis Tools" is off (web search is never called).
 
 ### OpenRouter Tool Calling with Streaming
 
@@ -416,8 +488,8 @@ Python `rank_bm25` over `summary` + `context` of candidates, top 5. No FTS5 unle
 ### Phasing
 
 1. **DB + read API + Events page (read-only + curation)** — tables, list/detail/resolve/dismiss endpoints, page with cards and filters
-2. **Tool infrastructure** — multi-turn streaming with tool execution, caps, source validation
-3. **LLM integration** — context injection, prompt additions, modal toggle, tool activity display, summary panel
+2. **Tool infrastructure** — multi-turn streaming with tool execution, caps, source validation, Tavily web search integration
+3. **LLM integration** — context injection (cap 15), prompt additions, modal toggle (default off), tool activity display, summary panel
 
 Phase 1 has no LLM dependency and can be verified with hand-inserted rows.
 
