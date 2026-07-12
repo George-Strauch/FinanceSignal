@@ -457,6 +457,36 @@ class RedditDatabase:
 
             CREATE INDEX IF NOT EXISTS idx_llm_analyses_ticker ON llm_analyses(ticker);
             CREATE INDEX IF NOT EXISTS idx_llm_analyses_created ON llm_analyses(created_at DESC);
+
+            -- ── Event Watcher ──────────────────────────────────────────────
+            CREATE TABLE IF NOT EXISTS watchlist_events (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                summary             TEXT NOT NULL,
+                context             TEXT NOT NULL,
+                related_tickers     TEXT DEFAULT '[]',
+                status              TEXT NOT NULL DEFAULT 'active',
+                discovered_at       REAL NOT NULL,
+                resolved_at         REAL,
+                expected_updates    TEXT DEFAULT '[]',
+                resolution_notes    TEXT,
+                created_by_analysis INTEGER,
+                updated_at          REAL NOT NULL,
+                change_log          TEXT DEFAULT '[]'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_events_status ON watchlist_events(status);
+            CREATE INDEX IF NOT EXISTS idx_events_discovered ON watchlist_events(discovered_at DESC);
+
+            CREATE TABLE IF NOT EXISTS event_sources (
+                event_id    INTEGER NOT NULL REFERENCES watchlist_events(id),
+                source_type TEXT NOT NULL,
+                source_id   TEXT NOT NULL,
+                analysis_id INTEGER,
+                created_at  REAL NOT NULL,
+                PRIMARY KEY (event_id, source_type, source_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_event_sources_event ON event_sources(event_id);
         """)
         self.conn.commit()
 
@@ -1345,3 +1375,413 @@ class RedditDatabase:
             (strategy_id, ticker.upper()),
         ).fetchone()
         return dict(row) if row else None
+
+    # ── Watchlist Events ────────────────────────────────────────────
+
+    STALE_THRESHOLD_DAYS = 14
+
+    def _parse_json_field(self, val) -> list:
+        if not val:
+            return []
+        try:
+            return json.loads(val)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def _compute_stale(self, event: dict) -> bool:
+        if event["status"] != "active":
+            return False
+        updates = self._parse_json_field(event.get("expected_updates"))
+        resolution_ts = [
+            u.get("timestamp") for u in updates
+            if u.get("type") == "resolution" and u.get("timestamp")
+        ]
+        if not resolution_ts:
+            return False
+        latest = max(resolution_ts)
+        try:
+            latest_f = float(latest)
+        except (TypeError, ValueError):
+            return False
+        age_days = (time.time() - latest_f) / 86400
+        return age_days > self.STALE_THRESHOLD_DAYS
+
+    def _enrich_event(self, row) -> dict:
+        event = dict(row)
+        event["related_tickers"] = self._parse_json_field(event.get("related_tickers"))
+        event["expected_updates"] = self._parse_json_field(event.get("expected_updates"))
+        event["change_log"] = self._parse_json_field(event.get("change_log"))
+        event["stale"] = self._compute_stale(event)
+        return event
+
+    def list_watchlist_events(
+        self, status: str | None = None, ticker: str | None = None,
+        sort: str = "discovered", limit: int = 50, offset: int = 0,
+    ) -> list[dict]:
+        clauses, params = [], []
+        if status and status != "all":
+            clauses.append("status = ?")
+            params.append(status)
+        if ticker:
+            clauses.append("EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)")
+            params.append(ticker.upper())
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        order = "discovered_at DESC" if sort == "discovered" else "updated_at DESC"
+        sql = f"SELECT * FROM watchlist_events{where} ORDER BY {order} LIMIT ? OFFSET ?"
+        rows = self.conn.execute(sql, params + [limit, offset]).fetchall()
+        return [self._enrich_event(r) for r in rows]
+
+    def count_watchlist_events(self, status: str | None = None, ticker: str | None = None) -> int:
+        clauses, params = [], []
+        if status and status != "all":
+            clauses.append("status = ?")
+            params.append(status)
+        if ticker:
+            clauses.append("EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)")
+            params.append(ticker.upper())
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = self.conn.execute(
+            f"SELECT COUNT(*) FROM watchlist_events{where}", params
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_watchlist_event(self, event_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM watchlist_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if not row:
+            return None
+        event = self._enrich_event(row)
+        event["sources"] = self.get_event_sources(event_id)
+        return event
+
+    def get_event_sources(self, event_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM event_sources WHERE event_id = ? ORDER BY created_at ASC",
+            (event_id,),
+        ).fetchall()
+        sources = []
+        for r in rows:
+            s = dict(r)
+            if r["source_type"] == "post":
+                p = self.conn.execute(
+                    "SELECT id, title, author, subreddit, score, num_comments, created_utc FROM posts WHERE id = ?",
+                    (r["source_id"],),
+                ).fetchone()
+                if p:
+                    s["post"] = dict(p)
+                    s["reddit_url"] = f"https://reddit.com/r/{p['subreddit']}/comments/{p['id']}"
+            else:
+                c = self.conn.execute(
+                    """SELECT c.id, c.body, c.author, c.score, c.created_utc, c.post_id,
+                              p.subreddit, p.title as post_title
+                       FROM comments c JOIN posts p ON c.post_id = p.id
+                       WHERE c.id = ?""",
+                    (r["source_id"],),
+                ).fetchone()
+                if c:
+                    s["comment"] = dict(c)
+                    s["reddit_url"] = f"https://reddit.com/r/{c['subreddit']}/comments/{c['post_id']}"
+            sources.append(s)
+        return sources
+
+    def create_watchlist_event(
+        self, summary: str, context: str, related_tickers: list[str],
+        source_ids: list[str], staged_map: dict, analysis_id: int | None = None,
+        expected_updates: list[dict] | None = None, already_resolved: bool = False,
+        resolution_notes: str | None = None,
+    ) -> dict:
+        now = time.time()
+        validated_sources = self._validate_source_ids(source_ids, staged_map)
+        if not validated_sources:
+            raise ValueError("No valid source IDs provided for event creation")
+
+        status = "discovered_and_resolved" if already_resolved else "active"
+        resolved_at = now if already_resolved else None
+
+        change_log = [{
+            "ts": now, "source": "llm",
+            "analysis_id": analysis_id, "action": "created",
+        }]
+        if already_resolved:
+            change_log.append({
+                "ts": now, "source": "llm",
+                "analysis_id": analysis_id,
+                "action": "resolved",
+                "detail": resolution_notes or "Already concluded at time of discovery",
+            })
+
+        cur = self.conn.execute(
+            """INSERT INTO watchlist_events
+               (summary, context, related_tickers, status, discovered_at,
+                resolved_at, expected_updates, resolution_notes,
+                created_by_analysis, updated_at, change_log)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (summary, context, json.dumps(related_tickers),
+             status, now, resolved_at,
+             json.dumps(expected_updates or []),
+             resolution_notes if already_resolved else None,
+             analysis_id, now, json.dumps(change_log)),
+        )
+        event_id = cur.lastrowid
+
+        for s in validated_sources:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO event_sources
+                   (event_id, source_type, source_id, analysis_id, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (event_id, s[0], s[1], analysis_id, now),
+            )
+
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def _validate_source_ids(self, source_ids: list[str], staged_map: dict) -> list[tuple[str, str]]:
+        validated = []
+        for sid in source_ids:
+            if sid in staged_map:
+                validated.append(staged_map[sid])
+        return validated
+
+    def update_watchlist_event(
+        self, event_id: int, context_addition: str | None = None,
+        add_related_tickers: list[str] | None = None,
+        source_ids: list[str] | None = None,
+        staged_map: dict | None = None,
+        add_expected_update: dict | None = None,
+        analysis_id: int | None = None,
+    ) -> dict | None:
+        event = self.get_watchlist_event(event_id)
+        if not event:
+            return None
+        if event["status"] == "dismissed":
+            raise ValueError("Cannot update a dismissed event")
+
+        now = time.time()
+        change_log = event["change_log"]
+
+        if context_addition:
+            new_context = event["context"] + "\n\n---\n" + context_addition
+            self.conn.execute(
+                "UPDATE watchlist_events SET context = ?, updated_at = ? WHERE id = ?",
+                (new_context, now, event_id),
+            )
+            change_log.append({
+                "ts": now, "source": "llm",
+                "analysis_id": analysis_id,
+                "action": "context_appended",
+                "detail": context_addition[:200],
+            })
+
+        if add_related_tickers:
+            current = set(event["related_tickers"])
+            new_tickers = [t.upper() for t in add_related_tickers if t.upper() not in current]
+            if new_tickers:
+                updated = list(current) + new_tickers
+                self.conn.execute(
+                    "UPDATE watchlist_events SET related_tickers = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(updated), now, event_id),
+                )
+                change_log.append({
+                    "ts": now, "source": "llm",
+                    "analysis_id": analysis_id,
+                    "action": "tickers_added",
+                    "detail": ", ".join(new_tickers),
+                })
+
+        if source_ids and staged_map:
+            validated = self._validate_source_ids(source_ids, staged_map)
+            for s in validated:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO event_sources
+                       (event_id, source_type, source_id, analysis_id, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (event_id, s[0], s[1], analysis_id, now),
+                )
+
+        if add_expected_update:
+            updates = event["expected_updates"]
+            updates.append(add_expected_update)
+            self.conn.execute(
+                "UPDATE watchlist_events SET expected_updates = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(updates), now, event_id),
+            )
+            change_log.append({
+                "ts": now, "source": "llm",
+                "analysis_id": analysis_id,
+                "action": "expected_update_added",
+                "detail": add_expected_update.get("label", ""),
+            })
+
+        self.conn.execute(
+            "UPDATE watchlist_events SET change_log = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(change_log), now, event_id),
+        )
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def resolve_watchlist_event(
+        self, event_id: int, resolution_notes: str,
+        source_ids: list[str] | None = None, staged_map: dict | None = None,
+        analysis_id: int | None = None,
+    ) -> dict | None:
+        event = self.get_watchlist_event(event_id)
+        if not event:
+            return None
+        now = time.time()
+        change_log = event["change_log"]
+        change_log.append({
+            "ts": now, "source": "llm" if analysis_id else "manual",
+            "analysis_id": analysis_id,
+            "action": "resolved",
+            "detail": resolution_notes[:200],
+        })
+
+        if source_ids and staged_map:
+            validated = self._validate_source_ids(source_ids, staged_map)
+            for s in validated:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO event_sources
+                       (event_id, source_type, source_id, analysis_id, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (event_id, s[0], s[1], analysis_id, now),
+                )
+
+        self.conn.execute(
+            """UPDATE watchlist_events
+               SET status = 'resolved', resolved_at = ?, resolution_notes = ?,
+                   change_log = ?, updated_at = ? WHERE id = ?""",
+            (now, resolution_notes, json.dumps(change_log), now, event_id),
+        )
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def dismiss_watchlist_event(self, event_id: int, notes: str) -> dict | None:
+        event = self.get_watchlist_event(event_id)
+        if not event:
+            return None
+        now = time.time()
+        change_log = event["change_log"]
+        change_log.append({
+            "ts": now, "source": "manual",
+            "action": "dismissed", "detail": notes[:200],
+        })
+        self.conn.execute(
+            """UPDATE watchlist_events
+               SET status = 'dismissed', resolved_at = ?, resolution_notes = ?,
+                   change_log = ?, updated_at = ? WHERE id = ?""",
+            (now, notes, json.dumps(change_log), now, event_id),
+        )
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def reactivate_watchlist_event(self, event_id: int) -> dict | None:
+        event = self.get_watchlist_event(event_id)
+        if not event:
+            return None
+        now = time.time()
+        change_log = event["change_log"]
+        change_log.append({
+            "ts": now, "source": "manual", "action": "reactivated",
+        })
+        self.conn.execute(
+            """UPDATE watchlist_events
+               SET status = 'active', resolved_at = NULL, resolution_notes = NULL,
+                   change_log = ?, updated_at = ? WHERE id = ?""",
+            (json.dumps(change_log), now, event_id),
+        )
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def delete_expected_update(self, event_id: int, index: int) -> dict | None:
+        event = self.get_watchlist_event(event_id)
+        if not event:
+            return None
+        updates = event["expected_updates"]
+        if index < 0 or index >= len(updates):
+            return None
+        updates.pop(index)
+        now = time.time()
+        self.conn.execute(
+            "UPDATE watchlist_events SET expected_updates = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(updates), now, event_id),
+        )
+        self.conn.commit()
+        return self.get_watchlist_event(event_id)
+
+    def search_watchlist_events(
+        self, query: str, ticker: str | None = None,
+        include_closed: bool = False, limit: int = 5,
+    ) -> list[dict]:
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            clauses = []
+            params = []
+            if not include_closed:
+                clauses.append("status IN ('active', 'discovered_and_resolved')")
+            if ticker:
+                clauses.append("EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)")
+                params.append(ticker.upper())
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            rows = self.conn.execute(
+                f"SELECT * FROM watchlist_events{where} ORDER BY discovered_at DESC LIMIT ?",
+                params + [limit],
+            ).fetchall()
+            return [self._enrich_event(r) for r in rows]
+
+        clauses = []
+        params = []
+        if not include_closed:
+            clauses.append("status IN ('active', 'discovered_and_resolved')")
+        if ticker:
+            clauses.append("EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)")
+            params.append(ticker.upper())
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM watchlist_events{where} ORDER BY discovered_at DESC",
+            params,
+        ).fetchall()
+        events = [self._enrich_event(r) for r in rows]
+        if not events:
+            return []
+
+        corpus = [f"{e['summary']} {e['context']}".lower().split() for e in events]
+        bm25 = BM25Okapi(corpus)
+        query_tokens = query.lower().split()
+        scores = bm25.get_scores(query_tokens)
+        ranked = sorted(zip(events, scores), key=lambda x: x[1], reverse=True)
+        return [e for e, s in ranked[:limit] if s > 0]
+
+    def get_events_for_injection(self, ticker: str, cap: int = 15) -> list[dict]:
+        ticker = ticker.upper()
+        ticker_events = []
+        for r in self.conn.execute(
+            """SELECT * FROM watchlist_events
+               WHERE EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)
+               ORDER BY
+                 CASE status WHEN 'active' THEN 0
+                             WHEN 'resolved' THEN 1
+                             WHEN 'discovered_and_resolved' THEN 2
+                             WHEN 'dismissed' THEN 3 END,
+                 discovered_at DESC""",
+            (ticker,),
+        ).fetchall():
+            event = self._enrich_event(r)
+            if event["status"] in ("resolved", "discovered_and_resolved"):
+                resolved_at = event.get("resolved_at")
+                if resolved_at and (time.time() - resolved_at) > 60 * 86400:
+                    continue
+            ticker_events.append(event)
+
+        macro_events = [
+            self._enrich_event(r) for r in self.conn.execute(
+                """SELECT * FROM watchlist_events
+                   WHERE related_tickers = '[]' AND status = 'active'
+                   ORDER BY discovered_at DESC"""
+            ).fetchall()
+        ]
+
+        all_events = (ticker_events + macro_events)[:cap]
+        return all_events

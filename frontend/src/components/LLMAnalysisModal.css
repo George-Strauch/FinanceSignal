@@ -522,6 +522,123 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Close Confirm ──────────────────────────────────────────────── */
+
+.llm-close-confirm {
+  position: absolute;
+  top: 60px;
+  right: 22px;
+  z-index: 10;
+  background: rgb(var(--secondary-color));
+  border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  font-size: 0.82rem;
+  color: rgb(var(--hard-text));
+}
+
+.llm-close-confirm-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgb(var(--color-error));
+  color: white;
+}
+
+.llm-close-confirm-btn.cancel {
+  background: rgba(var(--soft-border), 0.15);
+  color: rgb(var(--hard-text));
+}
+
+/* ── Tools Toggle ────────────────────────────────────────────────── */
+
+.llm-tools-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.llm-tools-toggle label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgb(var(--hard-text));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.llm-tools-toggle input[type="checkbox"] {
+  accent-color: rgb(var(--accent));
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+.llm-tools-tooltip {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  font-weight: 400;
+}
+
+.llm-tool-activity {
+  border-top: 1px solid rgba(var(--soft-border), calc(var(--soft-border-alpha) * 0.5));
+  padding-top: 8px;
+  margin-top: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.llm-tool-activity-line {
+  font-size: 0.76rem;
+  color: rgb(var(--soft-text));
+  padding: 3px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.llm-tool-activity-line .badge {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.llm-tool-activity-line .badge.create { background: rgba(34, 197, 94, 0.15); color: rgb(34, 197, 94); }
+.llm-tool-activity-line .badge.update { background: rgba(99, 102, 241, 0.15); color: rgb(129, 140, 248); }
+.llm-tool-activity-line .badge.resolve { background: rgba(251, 191, 36, 0.15); color: rgb(251, 191, 36); }
+.llm-tool-activity-line .badge.search { background: rgba(96, 165, 250, 0.15); color: rgb(96, 165, 250); }
+.llm-tool-activity-line .badge.web { background: rgba(167, 139, 250, 0.15); color: rgb(167, 139, 250); }
+
+.llm-tool-summary {
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(var(--accent), 0.06);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: rgb(var(--accent));
+  margin-bottom: 8px;
+}
+
+.llm-tool-summary a {
+  color: rgb(var(--accent));
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ── Responsive ────────────────────────────────────────────────── */
 
 @media (max-width: 1100px) {

@@ -75,7 +75,36 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
   const [streamContent, setStreamContent] = useState('')
   const [streamError, setStreamError] = useState(null)
   const [savedId, setSavedId] = useState(null)
+  const [toolsEnabled, setToolsEnabled] = useState(false)
+  const [toolActivity, setToolActivity] = useState([])
   const streamRef = useRef(null)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+
+  const handleClose = useCallback(() => {
+    if (streaming) {
+      setShowCloseConfirm(true)
+      return
+    }
+    onClose()
+  }, [streaming, onClose])
+
+  useEffect(() => {
+    if (!isOpen) {
+      setShowCloseConfirm(false)
+      return
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        if (showCloseConfirm) {
+          setShowCloseConfirm(false)
+        } else {
+          handleClose()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [isOpen, showCloseConfirm, handleClose])
 
   useEffect(() => {
     if (isOpen) {
@@ -89,6 +118,7 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
       setStreamContent('')
       setStreamError(null)
       setSavedId(null)
+      setToolActivity([])
     }
   }, [isOpen, prefillDateFrom, prefillDateTo])
 
@@ -131,6 +161,7 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
     setStreamContent('')
     setStreamError(null)
     setSavedId(null)
+    setToolActivity([])
 
     try {
       const response = await fetch('/api/analysis/stream', {
@@ -141,6 +172,9 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
           model: selectedModel,
           system_prompt: systemPrompt,
           posts: activePosts,
+          tools_enabled: toolsEnabled,
+          date_from: dateFrom,
+          date_to: dateTo,
         }),
       })
 
@@ -170,6 +204,9 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
             if (chunk.error) {
               setStreamError(chunk.error)
             }
+            if (chunk.tool_activity) {
+              setToolActivity((prev) => [...prev, chunk.tool_activity])
+            }
             if (chunk.done) {
               setSavedId(chunk.analysis_id)
             }
@@ -183,19 +220,26 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
     } finally {
       setStreaming(false)
     }
-  }, [activePosts, ticker, selectedModel, systemPrompt])
+  }, [activePosts, ticker, selectedModel, systemPrompt, toolsEnabled, dateFrom, dateTo])
 
   if (!isOpen) return null
 
   return (
-    <div className="llm-modal-backdrop" onClick={onClose}>
-      <div className="llm-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="llm-modal-backdrop">
+      <div className="llm-modal">
         <div className="llm-modal-header">
           <h2>LLM Analysis — {ticker}</h2>
-          <button className="llm-modal-close" onClick={onClose}>
+          <button className="llm-modal-close" onClick={handleClose}>
             <FiX />
           </button>
         </div>
+        {showCloseConfirm && (
+          <div className="llm-close-confirm">
+            <span>Analysis is still streaming. Close anyway?</span>
+            <button className="llm-close-confirm-btn" onClick={() => { setShowCloseConfirm(false); onClose() }}>Yes, close</button>
+            <button className="llm-close-confirm-btn cancel" onClick={() => setShowCloseConfirm(false)}>Cancel</button>
+          </div>
+        )}
 
         <div className="llm-modal-body">
           {/* ── Left: Config + Staging ────────────────────────── */}
@@ -250,6 +294,20 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   rows={5}
                 />
+              </div>
+
+              <div className="llm-tools-toggle">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={toolsEnabled}
+                    onChange={(e) => setToolsEnabled(e.target.checked)}
+                  />
+                  Enable Analysis Tools
+                </label>
+                <span className="llm-tools-tooltip">
+                  Event tracking + web search. Off by default to keep historical tests clean.
+                </span>
               </div>
             </div>
 
@@ -372,6 +430,28 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
                   Stage posts and run analysis to see results here.
                 </div>
               )}
+              {toolActivity.length > 0 && (
+                <div className="llm-tool-activity">
+                  {toolActivity.map((a, i) => (
+                    <div key={i} className="llm-tool-activity-line">
+                      <span className={`badge ${a.type}`}>{a.type}</span>
+                      <span>{a.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {savedId && toolActivity.length > 0 && (() => {
+                const created = toolActivity.filter((a) => a.type === 'create').length
+                const updated = toolActivity.filter((a) => a.type === 'update').length
+                const resolved = toolActivity.filter((a) => a.type === 'resolve').length
+                const searched = toolActivity.filter((a) => a.type === 'web').length
+                return (
+                  <div className="llm-tool-summary">
+                    <span>Created {created}, Updated {updated}, Resolved {resolved}, {searched} web searches</span>
+                    <a onClick={() => window.location.hash = '#/events'}>View Events →</a>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         </div>
