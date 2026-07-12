@@ -515,23 +515,21 @@ export default function TickerDetail() {
   const subMentionSubs = subMentionData
     ? [...new Set(subMentionData.map((r) => r.subreddit))]
     : []
-  const subMentionChartDataRaw = subMentionData
+
+  // Build subreddit chart data using ONLY the same dates as the price chart
+  // so both categorical x-axes have identical tick positions (no weekend offset)
+  const allChartDates = new Set(mergedPriceData.map((d) => d.t))
+  const subMentionPivot = subMentionData
     ? pivotChartData(subMentionData, subMentionSubs)
     : []
-
-  // Pad subreddit chart with zero-filled entries for dates in price chart
-  // so both charts share the same x-axis domain and align pixel-perfectly
-  const allChartDates = new Set(mergedPriceData.map((d) => d.t))
-  const existingSubDates = new Set(subMentionChartDataRaw.map((d) => d.timestamp))
-  const subMentionChartData = [...subMentionChartDataRaw]
-  for (const d of allChartDates) {
-    if (!existingSubDates.has(d)) {
-      const entry = { timestamp: d }
-      for (const sub of subMentionSubs) entry[sub] = 0
-      subMentionChartData.push(entry)
-    }
-  }
-  subMentionChartData.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  const subMentionMap = new Map(subMentionPivot.map((d) => [d.timestamp, d]))
+  const subMentionChartData = mergedPriceData
+    .map((d) => {
+      const entry = { timestamp: d.t }
+      for (const sub of subMentionSubs) entry[sub] = subMentionMap.get(d.t)?.[sub] ?? 0
+      return entry
+    })
+    .filter((d) => subMentionSubs.length > 0)
 
   // Compute shared x-axis domain for both charts
   const chartDomain = mergedPriceData.length > 0
