@@ -916,6 +916,66 @@ export default function ProcessMonitor() {
                   <span className="detail-field-value">{m.empty_polls.toLocaleString()}</span>
                 </div>
               )}
+              {m.tickers_total != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Tickers Total</span>
+                  <span className="detail-field-value">{m.tickers_total.toLocaleString()}</span>
+                </div>
+              )}
+              {m.tickers_fetched != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Tickers Fetched</span>
+                  <span className="detail-field-value">{m.tickers_fetched.toLocaleString()}</span>
+                </div>
+              )}
+              {m.tickers_skipped != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Tickers Skipped</span>
+                  <span className="detail-field-value">{m.tickers_skipped.toLocaleString()}</span>
+                </div>
+              )}
+              {m.tickers_failed != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Tickers Failed</span>
+                  <span className="detail-field-value">{m.tickers_failed.toLocaleString()}</span>
+                </div>
+              )}
+              {m.tickers_rate_limited != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Rate Limited</span>
+                  <span className="detail-field-value">{m.tickers_rate_limited.toLocaleString()}</span>
+                </div>
+              )}
+              {m.rows_inserted != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Rows Inserted</span>
+                  <span className="detail-field-value">{m.rows_inserted.toLocaleString()}</span>
+                </div>
+              )}
+              {m.current_ticker != null && m.current_ticker !== '' && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Current Ticker</span>
+                  <span className="detail-field-value">{m.current_ticker}</span>
+                </div>
+              )}
+              {m.consecutive_failures != null && m.consecutive_failures > 0 && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Consecutive Failures</span>
+                  <span className="detail-field-value">{m.consecutive_failures}</span>
+                </div>
+              )}
+              {m.in_cooldown != null && m.in_cooldown && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Cooldown Until</span>
+                  <span className="detail-field-value">{m.cooldown_until ? formatTime(m.cooldown_until) : '—'}</span>
+                </div>
+              )}
+              {m.last_cycle_duration != null && (
+                <div className="detail-field">
+                  <span className="detail-field-label">Last Cycle</span>
+                  <span className="detail-field-value">{m.last_cycle_duration}s</span>
+                </div>
+              )}
             </>
           )}
         </div>

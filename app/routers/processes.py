@@ -180,6 +180,36 @@ async def get_process(job_id: str, db: RedditDatabase = Depends(get_db)):
             "termination_reason": state.termination_reason,
         }
 
+    # Fundamentals fetcher monitor
+    if job_id == "fundamentals_fetcher" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "current_phase": "fetching" if proc.running else "idle",
+            "tickers_total": state.tickers_total,
+            "tickers_fetched": state.tickers_fetched,
+            "tickers_skipped": state.tickers_skipped,
+            "tickers_failed": state.tickers_failed,
+            "tickers_rate_limited": state.tickers_rate_limited,
+            "current_ticker": state.current_ticker,
+            "consecutive_failures": state.consecutive_failures,
+            "in_cooldown": state.in_cooldown,
+            "cooldown_until": _ts(state.cooldown_until) if state.cooldown_until else None,
+            "last_cycle_duration": round(state.last_cycle_duration, 1) if state.last_cycle_duration else None,
+        }
+
+    # Price archiver monitor
+    if job_id == "price_archiver" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "current_phase": "fetching" if proc.running else "idle",
+            "tickers_total": state.tickers_total,
+            "tickers_fetched": state.tickers_fetched,
+            "tickers_skipped": state.tickers_skipped,
+            "tickers_failed": state.tickers_failed,
+            "rows_inserted": state.rows_inserted,
+            "current_ticker": state.current_ticker,
+        }
+
     return result
 
 
