@@ -119,6 +119,11 @@ def _drain_backfetch_queue(state: BackfetchState, cycle_id: int):
     counters = FetchCounters()
 
     with RedditDatabase() as db:
+        # Reclaim stale in_progress rows from previous crashed runs
+        reclaimed = db.reclaim_stale_fetches(source="backfetch")
+        if reclaimed > 0:
+            logger.info("Reclaimed %d stale in_progress backfetch rows", reclaimed)
+
         while not state._stop_event.is_set():
             row = db.claim_next_fetch(source="backfetch")
             if row is None:

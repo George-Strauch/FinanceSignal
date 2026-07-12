@@ -1015,6 +1015,7 @@ export default function ProcessMonitor() {
                     <th>New</th>
                     <th>Status</th>
                     <th>Wait Time</th>
+                    <th>Fetch Time</th>
                     <th>Completed</th>
                     <th>Error</th>
                   </tr>
@@ -1030,6 +1031,7 @@ export default function ProcessMonitor() {
                       <td>{r.posts_new ?? '-'}</td>
                       <td className={`fq-status-cell fq-status-${r.status}`}>{r.status}</td>
                       <td className="fq-time">{formatDuration(r.enqueued_at, r.fetch_completed_at)}</td>
+                      <td className="fq-time">{r.fetch_duration != null ? `${r.fetch_duration.toFixed(1)}s` : '—'}</td>
                       <td className="fq-time">{formatTime(r.fetch_completed_at)}</td>
                       <td className="fq-error-cell" title={r.error || ''}>{r.error || ''}</td>
                     </tr>

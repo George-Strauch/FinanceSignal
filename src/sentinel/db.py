@@ -605,6 +605,7 @@ class RedditDatabase:
             "ALTER TABLE named_entities ADD COLUMN is_canonical INTEGER DEFAULT 0",
             "ALTER TABLE named_entities ADD COLUMN canonical_link INTEGER DEFAULT NULL",
             "ALTER TABLE fetch_queue ADD COLUMN source TEXT DEFAULT 'scraper'",
+            "ALTER TABLE fetch_queue ADD COLUMN fetch_duration REAL",
             "ALTER TABLE relevance_queue ADD COLUMN attempts INTEGER DEFAULT 0",
             "ALTER TABLE relevance_queue ADD COLUMN next_attempt_at REAL",
         ]:
@@ -903,30 +904,70 @@ class RedditDatabase:
                            posts_new: int, next_after: str | None = None,
                            log_id: int | None = None):
         """Mark a fetch as completed successfully."""
+        now = time.time()
+        # Compute duration from fetch_started_at if available
+        row = self.conn.execute(
+            "SELECT fetch_started_at FROM fetch_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+        duration = None
+        if row and row["fetch_started_at"]:
+            duration = now - row["fetch_started_at"]
         self.conn.execute("""
             UPDATE fetch_queue
             SET status = 'success',
                 fetch_completed_at = ?,
+                fetch_duration = ?,
                 posts_fetched = ?,
                 posts_new = ?,
                 next_after = ?,
                 log_id = ?
             WHERE id = ?
-        """, (time.time(), posts_fetched, posts_new, next_after, log_id, queue_id))
+        """, (now, duration, posts_fetched, posts_new, next_after, log_id, queue_id))
         self.conn.commit()
 
     def mark_fetch_failed(self, queue_id: int, error: str,
                           log_id: int | None = None):
         """Mark a fetch as failed."""
+        now = time.time()
+        row = self.conn.execute(
+            "SELECT fetch_started_at FROM fetch_queue WHERE id = ?", (queue_id,)
+        ).fetchone()
+        duration = None
+        if row and row["fetch_started_at"]:
+            duration = now - row["fetch_started_at"]
         self.conn.execute("""
             UPDATE fetch_queue
             SET status = 'failed',
                 fetch_completed_at = ?,
+                fetch_duration = ?,
                 error = ?,
                 log_id = ?
             WHERE id = ?
-        """, (time.time(), error, log_id, queue_id))
+        """, (now, duration, error, log_id, queue_id))
         self.conn.commit()
+
+    def reclaim_stale_fetches(self, stale_seconds: float = 600,
+                              source: str | None = None) -> int:
+        """Reclaim in_progress rows that have been stuck longer than
+        stale_seconds. Returns count of reclaimed rows. Resets them to
+        'ready' so they'll be re-claimed on the next cycle."""
+        cutoff = time.time() - stale_seconds
+        source_filter = "AND source = ?" if source else ""
+        params = [cutoff]
+        if source:
+            params.append(source)
+        cur = self.conn.execute(f"""
+            UPDATE fetch_queue
+            SET status = 'ready',
+                claimed_at = NULL,
+                fetch_started_at = NULL,
+                error = 'reclaimed (stale in_progress)'
+            WHERE status = 'in_progress'
+              AND claimed_at < ?
+              {source_filter}
+        """, params)
+        self.conn.commit()
+        return cur.rowcount
 
     def mark_fetch_started(self, queue_id: int):
         """Record the moment a fetch's HTTP request begins."""

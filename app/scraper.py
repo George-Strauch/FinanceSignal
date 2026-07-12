@@ -125,6 +125,11 @@ def _process_queue(state: ScraperState, cycle_id: int):
     counters = FetchCounters()
 
     with RedditDatabase() as db:
+        # Reclaim stale in_progress rows from previous crashed cycles
+        reclaimed = db.reclaim_stale_fetches(source="scraper")
+        if reclaimed > 0:
+            logger.info("Reclaimed %d stale in_progress fetch rows", reclaimed)
+
         while not state._stop_event.is_set():
             row = db.claim_next_fetch(source="scraper")
             if row is None:

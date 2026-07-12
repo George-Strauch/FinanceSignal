@@ -293,6 +293,7 @@ async def get_fetch_queue(
             "claimed_at": _ts(r.get("claimed_at")),
             "fetch_started_at": _ts(r.get("fetch_started_at")),
             "fetch_completed_at": _ts(r.get("fetch_completed_at")),
+            "fetch_duration": r.get("fetch_duration"),
             "posts_fetched": r.get("posts_fetched", 0),
             "posts_new": r.get("posts_new", 0),
             "next_after": r.get("next_after"),
