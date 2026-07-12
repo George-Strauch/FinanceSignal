@@ -757,24 +757,12 @@ def historical_trending(
         for sr in sub_rows:
             sub_map.setdefault(sr["ticker"], []).append(sr["subreddit"])
 
-        # Bucket format depends on granularity + lookback
-        if granularity == "month":
-            bucket_fmt = "%Y-%m"
-        elif granularity == "week":
-            bucket_fmt = "%Y-%m-%d"  # will be floored to Monday
-        else:
-            bucket_fmt = "%Y-%m-%dT%H:00:00"
-
+        # Mention sparkline always buckets daily so you can see the
+        # day-by-day signal over the lookback + selected window
         def _bucket_key(ts):
-            """Floor a timestamp to the appropriate bucket."""
+            """Floor a timestamp to a daily bucket."""
             dt = datetime.fromtimestamp(ts, tz=ET)
-            if granularity == "month":
-                return dt.strftime("%Y-%m")
-            elif granularity == "week":
-                monday = dt - timedelta(days=dt.weekday())
-                return monday.strftime("%Y-%m-%d")
-            else:
-                return dt.strftime("%Y-%m-%dT%H:00:00")
+            return dt.strftime("%Y-%m-%d")
 
         if count_mode == CountMode.authors:
             spark_rows = db.conn.execute(
