@@ -106,45 +106,100 @@ async def run_scraper_cycle(state: ScraperState):
     )
 
 
+MAX_PAGES_PER_CYCLE = 10  # Safety cap — ~250 posts per subreddit per cycle
+
+
 def _fetch_subreddit(subreddit: str, state: ScraperState):
-    """Fetch one page of new posts for a subreddit, then refresh comments for
-    all posts from the last 24 hours (runs in thread)."""
+    """Paginate /new/ for a subreddit until caught up to already-seen posts,
+    fetching each new post's permalink for selftext + comments in one request.
+    Then refresh comments for recent posts (last 24h). Runs in a thread.
+
+    Coverage strategy: /new/ is newest-first. We keep paginating until we hit
+    a post ID already in the DB (everything older is already known) or the
+    MAX_PAGES cap. Each new post gets a permalink fetch which yields the OP
+    selftext AND the comment tree in a single request.
+    """
     fetcher = RedditFetcher(min_interval=state.request_delay)
     fetch_start = time.time()
     total_new = 0
     total_updated = 0
     total_comments = 0
     new_post_ids: set[str] = set()
+    seen_local: set[str] = set()  # dedupe within this cycle
 
     with RedditDatabase() as db:
-        response = fetcher.fetch_new_posts(subreddit, limit=DEFAULT_PAGE_LIMIT)
-        posts = response["posts"]
+        after = None
+        caught_up = False
+        pages = 0
 
-        for raw_post in posts:
+        while not state._stop_event.is_set() and pages < MAX_PAGES_PER_CYCLE and not caught_up:
             try:
-                post_data = raw_post.get("data", {})
-                post_id = post_data.get("id", "")
+                response = fetcher.fetch_new_posts(subreddit, limit=DEFAULT_PAGE_LIMIT, after=after)
+            except Exception:
+                logger.exception("fetch_new_posts failed r/%s page %d", subreddit, pages + 1)
+                state.errors_this_cycle += 1
+                break
 
-                was_new = db.upsert_post(raw_post, subreddit)
-                if was_new:
+            posts = response["posts"]
+            after = response.get("after")
+            pages += 1
+
+            if not posts:
+                break
+
+            for raw_post in posts:
+                if state._stop_event.is_set():
+                    break
+                try:
+                    post_data = raw_post.get("data", {})
+                    post_id = post_data.get("id", "")
+                    if not post_id or post_id in seen_local:
+                        continue
+                    seen_local.add(post_id)
+
+                    # Caught up? — this post is already in the DB, so everything
+                    # older on /new/ is already known. Refresh its score/num_comments
+                    # then stop paginating.
+                    existing = db.conn.execute(
+                        "SELECT 1 FROM posts WHERE id = ?", (post_id,)
+                    ).fetchone()
+                    if existing:
+                        db.upsert_post(raw_post, subreddit)
+                        total_updated += 1
+                        caught_up = True
+                        break
+
+                    # New post — fetch permalink for selftext + comments + media
+                    try:
+                        detail = fetcher.fetch_post_detail(subreddit, post_id)
+                        detail_post = (detail.get("post") or {}).get("data", {})
+                        if detail_post.get("selftext"):
+                            post_data["selftext"] = detail_post["selftext"]
+                            post_data["selftext_html"] = detail_post.get("selftext_html")
+                    except Exception:
+                        logger.exception("Post detail failed for %s", post_id)
+                        state.errors_this_cycle += 1
+
+                    db.upsert_post(raw_post, subreddit)
                     total_new += 1
                     new_post_ids.add(post_id)
-                    media_links = fetcher.extract_media_links(raw_post)
+
+                    media_links = detail.get("media_links") if "detail" in locals() else None
+                    if not media_links:
+                        media_links = fetcher.extract_media_links(raw_post)
                     if media_links:
                         db.save_media_links(post_id, media_links)
-                    try:
-                        comments = fetcher.fetch_post_comments(subreddit, post_id)
-                        for comment in comments:
-                            db.upsert_comment(comment, post_id)
-                        total_comments += len(comments)
-                    except Exception:
-                        logger.exception("Comments failed for %s", post_id)
-                        state.errors_this_cycle += 1
-                else:
-                    total_updated += 1
-            except Exception:
-                logger.exception("Post processing failed in r/%s", subreddit)
-                state.errors_this_cycle += 1
+
+                    comments = detail.get("comments", []) if "detail" in locals() else []
+                    for comment in comments:
+                        db.upsert_comment(comment, post_id)
+                    total_comments += len(comments)
+                except Exception:
+                    logger.exception("Post processing failed in r/%s", subreddit)
+                    state.errors_this_cycle += 1
+
+            if not after:
+                break
 
         # ── Refresh comments for recent posts (last 24h) ──────────────
         # New posts already had their comments fetched above, so only

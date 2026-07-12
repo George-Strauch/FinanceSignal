@@ -9,7 +9,7 @@
             "type": "oneshot",
             "auto_start": true,
             "schedule": {
-                "interval_minutes": 30,
+                "interval_minutes": 60,
                 "interval_type": "after_completion"
             },
             "params": [
@@ -34,12 +34,8 @@
             "module": "app.scraper",
             "function": "reprocess_all_tickers",
             "type": "oneshot",
-            "auto_start": true,
-            "on_failure": "stop",
-            "schedule": {
-                "interval_minutes": 10,
-                "interval_type": "after_completion"
-            }
+            "auto_start": false,
+            "on_failure": "stop"
         },
         {
             "id": "ner_extraction",

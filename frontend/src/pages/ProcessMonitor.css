@@ -97,13 +97,35 @@
 }
 
 .job-type-badge {
-  background: rgba(var(--accent), 0.12);
-  color: rgb(var(--accent));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.7rem;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 10px;
   text-transform: uppercase;
+}
+
+.job-type-badge.mode-scheduled {
+  background: rgba(var(--accent), 0.12);
+  color: rgb(var(--accent));
+}
+
+.job-type-badge.mode-manual {
+  background: rgba(var(--soft-text), 0.12);
+  color: rgb(var(--soft-text));
+}
+
+.job-type-badge.mode-continuous {
+  background: rgba(46, 204, 113, 0.12);
+  color: rgb(46, 204, 113);
+}
+
+.job-schedule-label {
+  font-size: 0.72rem;
+  color: rgb(var(--soft-text));
+  font-weight: 500;
 }
 
 .job-action-btn {

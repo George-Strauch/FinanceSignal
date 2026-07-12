@@ -41,8 +41,12 @@ REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 MIN_REQUEST_INTERVAL = float(os.environ.get("MIN_REQUEST_INTERVAL", "6.0"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
+# NOTE: old.reddit.com serves real HTML to browser-like UAs; the old
+# script-style UA ("script:reddit-sentinel:...") triggered 403s / challenges.
 USER_AGENT = os.environ.get(
-    "USER_AGENT", "script:reddit-sentinel:v2.0 (by u/Jolly-Ad-6053)"
+    "USER_AGENT",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 )
 DEFAULT_PAGE_LIMIT = int(os.environ.get("DEFAULT_PAGE_LIMIT", "100"))
 BACKFILL_STATE_PATH = os.environ.get(

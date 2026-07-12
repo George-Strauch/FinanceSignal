@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { FiPlay, FiSquare, FiRefreshCw, FiEdit2, FiCheck, FiX } from 'react-icons/fi'
+import { FiPlay, FiSquare, FiRefreshCw, FiEdit2, FiCheck, FiX, FiClock, FiTarget, FiActivity } from 'react-icons/fi'
 import { get, post, put } from '../api/client'
 import './ProcessMonitor.css'
 
@@ -41,6 +41,35 @@ function scheduleLabel(schedule) {
   const mins = schedule.interval_minutes
   if (schedule.interval_type === 'after_completion') return `${mins}m cooldown`
   return `every ${mins}m`
+}
+
+// Derive a run mode from type + schedule:
+//   continuous → runs forever until stopped
+//   oneshot + schedule → recurring scheduled job (runs, waits, repeats)
+//   oneshot + no schedule → manual one-shot (runs once when triggered)
+function runMode(job) {
+  if (job.type === 'continuous') return 'continuous'
+  if (job.schedule) return 'scheduled'
+  return 'manual'
+}
+
+function runModeIcon(mode) {
+  if (mode === 'continuous') return <FiActivity size={11} />
+  if (mode === 'scheduled') return <FiClock size={11} />
+  return <FiTarget size={11} />
+}
+
+function runModeLabel(mode) {
+  if (mode === 'continuous') return 'Continuous'
+  if (mode === 'scheduled') return 'Scheduled'
+  return 'Manual'
+}
+
+function runModeDetail(job) {
+  const mode = runMode(job)
+  if (mode === 'continuous') return 'Runs continuously until stopped'
+  if (mode === 'scheduled') return `Scheduled — ${scheduleLabel(job.schedule)}`
+  return 'Manual — run on demand'
 }
 
 export default function ProcessMonitor() {
@@ -333,22 +362,17 @@ export default function ProcessMonitor() {
           </div>
           <div className="config-display-grid">
             <div className="detail-field">
-              <span className="detail-field-label">Type</span>
-              <span className="detail-field-value">{selectedJob.type}</span>
+              <span className="detail-field-label">Run Mode</span>
+              <span className={`detail-field-value mode-badge mode-${runMode(selectedJob)}`}>
+                {runModeIcon(runMode(selectedJob))}
+                {runModeDetail(selectedJob)}
+              </span>
             </div>
             {selectedJob.type === 'continuous' && (
               <div className="detail-field">
                 <span className="detail-field-label">On Failure</span>
                 <span className="detail-field-value">
                   {selectedJob.on_failure === 'restart' ? 'Restart (10s delay)' : 'Stop'}
-                </span>
-              </div>
-            )}
-            {selectedJob.type === 'oneshot' && (
-              <div className="detail-field">
-                <span className="detail-field-label">Schedule</span>
-                <span className="detail-field-value">
-                  {scheduleLabel(selectedJob.schedule) || 'None'}
                 </span>
               </div>
             )}
@@ -401,14 +425,31 @@ export default function ProcessMonitor() {
           </div>
           <div className="config-field-row">
             <div className="config-field">
-              <label className="param-label">Type</label>
+              <label className="param-label">Run Mode</label>
               <select
                 className="config-input"
-                value={editConfig.type}
-                onChange={(e) => updateEditField('type', e.target.value)}
+                value={
+                  editConfig.type === 'continuous' ? 'continuous'
+                  : editConfig.schedule_enabled ? 'scheduled'
+                  : 'manual'
+                }
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === 'continuous') {
+                    updateEditField('type', 'continuous')
+                    updateEditField('schedule_enabled', false)
+                  } else if (v === 'scheduled') {
+                    updateEditField('type', 'oneshot')
+                    updateEditField('schedule_enabled', true)
+                  } else {
+                    updateEditField('type', 'oneshot')
+                    updateEditField('schedule_enabled', false)
+                  }
+                }}
               >
-                <option value="continuous">Continuous</option>
-                <option value="oneshot">Oneshot</option>
+                <option value="manual">Manual — run on demand</option>
+                <option value="scheduled">Scheduled — recurring interval</option>
+                <option value="continuous">Continuous — runs until stopped</option>
               </select>
             </div>
             <div className="config-field">
@@ -435,44 +476,30 @@ export default function ProcessMonitor() {
               </select>
             </div>
           )}
-          {editConfig.type === 'oneshot' && (
-            <>
+          {editConfig.type === 'oneshot' && editConfig.schedule_enabled && (
+            <div className="config-schedule-fields">
               <div className="config-field">
-                <label className="param-label">Schedule</label>
-                <button
-                  className={`config-toggle${editConfig.schedule_enabled ? ' active' : ''}`}
-                  onClick={() => updateEditField('schedule_enabled', !editConfig.schedule_enabled)}
-                  type="button"
-                >
-                  {editConfig.schedule_enabled ? 'ON' : 'OFF'}
-                </button>
+                <label className="param-label">Interval (minutes)</label>
+                <input
+                  className="config-input"
+                  type="number"
+                  min={1}
+                  value={editConfig.interval_minutes}
+                  onChange={(e) => updateEditField('interval_minutes', e.target.value)}
+                />
               </div>
-              {editConfig.schedule_enabled && (
-                <div className="config-schedule-fields">
-                  <div className="config-field">
-                    <label className="param-label">Interval (minutes)</label>
-                    <input
-                      className="config-input"
-                      type="number"
-                      min={1}
-                      value={editConfig.interval_minutes}
-                      onChange={(e) => updateEditField('interval_minutes', e.target.value)}
-                    />
-                  </div>
-                  <div className="config-field">
-                    <label className="param-label">Interval Type</label>
-                    <select
-                      className="config-input"
-                      value={editConfig.interval_type}
-                      onChange={(e) => updateEditField('interval_type', e.target.value)}
-                    >
-                      <option value="after_completion">After Completion</option>
-                      <option value="interval">Fixed Interval</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-            </>
+              <div className="config-field">
+                <label className="param-label">Interval Type</label>
+                <select
+                  className="config-input"
+                  value={editConfig.interval_type}
+                  onChange={(e) => updateEditField('interval_type', e.target.value)}
+                >
+                  <option value="after_completion">After Completion</option>
+                  <option value="interval">Fixed Interval</option>
+                </select>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -690,9 +717,13 @@ export default function ProcessMonitor() {
             </div>
             {job.description && <div className="job-card-desc">{job.description}</div>}
             <div className="job-card-meta">
-              <span className="job-type-badge">
-                {scheduleLabel(job.schedule) || job.type}
+              <span className={`job-type-badge mode-${runMode(job)}`}>
+                {runModeIcon(runMode(job))}
+                {runModeLabel(runMode(job))}
               </span>
+              {runMode(job) === 'scheduled' && (
+                <span className="job-schedule-label">{scheduleLabel(job.schedule)}</span>
+              )}
             </div>
           </div>
         ))}
