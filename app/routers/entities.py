@@ -171,23 +171,21 @@ def top_entities(
         LIMIT ?
     """, [*params, limit]).fetchall()
 
-    # Subreddit distribution for top entities
-    entity_keys = [(r["entity_text"], r["entity_label"]) for r in rows]
+    # Subreddit distribution for top entities — single pass with an IN
+    # clause on entity_text. Much faster than the old 200 OR pairs approach
+    # because SQLite can use the idx_ne_entity_text index for the filter.
+    entity_texts = [r["entity_text"] for r in rows]
     sub_map: dict[str, dict[str, int]] = {}
-    if entity_keys:
-        pair_clauses = " OR ".join(["(entity_text = ? AND entity_label = ?)"] * len(entity_keys))
-        pair_params = []
-        for text, lbl in entity_keys:
-            pair_params.extend([text, lbl])
-
-        sub_where = "WHERE " if where else ""
-        sub_where_parts = []
-        sub_params: list = []
+    if entity_texts:
+        placeholders = ",".join(["?"] * len(entity_texts))
+        sub_where_parts = [f"entity_text IN ({placeholders})"]
+        sub_params: list = list(entity_texts)
         if window is not None:
             sub_where_parts.append("created_utc >= ?")
             sub_params.append(_cutoff(window.value))
-        sub_where_parts.append(f"({pair_clauses})")
-        sub_params.extend(pair_params)
+        if label and label != "all":
+            sub_where_parts.append("entity_label = ?")
+            sub_params.append(label)
         sub_where = "WHERE " + " AND ".join(sub_where_parts)
 
         sub_rows = db.conn.execute(f"""
@@ -195,7 +193,6 @@ def top_entities(
             FROM named_entities
             {sub_where}
             GROUP BY entity_text, subreddit
-            ORDER BY cnt DESC
         """, sub_params).fetchall()
         for sr in sub_rows:
             sub_map.setdefault(sr["entity_text"], {})[sr["subreddit"]] = sr["cnt"]

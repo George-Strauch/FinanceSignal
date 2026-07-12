@@ -184,6 +184,8 @@ class RedditDatabase:
                 subreddit       TEXT,
                 created_utc     REAL,
                 discovered_at   REAL NOT NULL,
+                is_canonical    INTEGER DEFAULT 0,
+                canonical_link  INTEGER DEFAULT NULL,
                 UNIQUE(source_type, source_id, entity_text, entity_label)
             );
             CREATE INDEX IF NOT EXISTS idx_ne_entity_text ON named_entities(entity_text);
@@ -487,6 +489,23 @@ class RedditDatabase:
             );
 
             CREATE INDEX IF NOT EXISTS idx_event_sources_event ON event_sources(event_id);
+
+            CREATE TABLE IF NOT EXISTS process_logs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts            REAL NOT NULL,
+                job_id        TEXT NOT NULL,
+                level         TEXT NOT NULL,
+                message       TEXT NOT NULL,
+                logger_name   TEXT,
+                source_file   TEXT,
+                source_line   INTEGER,
+                func_name     TEXT,
+                attrs_json    TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_process_logs_ts ON process_logs(ts);
+            CREATE INDEX IF NOT EXISTS idx_process_logs_job ON process_logs(job_id);
+            CREATE INDEX IF NOT EXISTS idx_process_logs_level ON process_logs(level);
+            CREATE INDEX IF NOT EXISTS idx_process_logs_job_ts ON process_logs(job_id, ts);
         """)
         self.conn.commit()
 
@@ -498,11 +517,22 @@ class RedditDatabase:
             "ALTER TABLE llm_analyses ADD COLUMN staged_posts TEXT",
             "ALTER TABLE ticker_fundamentals ADD COLUMN long_business_summary TEXT",
             "ALTER TABLE ticker_fundamentals_latest ADD COLUMN long_business_summary TEXT",
+            "ALTER TABLE named_entities ADD COLUMN is_canonical INTEGER DEFAULT 0",
+            "ALTER TABLE named_entities ADD COLUMN canonical_link INTEGER DEFAULT NULL",
         ]:
             try:
                 self.conn.execute(col_sql)
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+        # Index on canonical_link — created after ALTER TABLE ensures the
+        # column exists. Idempotent.
+        try:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ne_canonical_link ON named_entities(canonical_link)"
+            )
+        except sqlite3.OperationalError:
+            pass
 
     # ── Helpers ────────────────────────────────────────────────────────
 

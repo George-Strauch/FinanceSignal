@@ -386,7 +386,18 @@ export default function LLMAnalysisModal({ isOpen, onClose, ticker, prefillDateF
                             <span className={`llm-staged-type ${s.type}`}>
                               {s.type}
                             </span>
-                            {s.title && <span className="llm-staged-post-title">{s.title}</span>}
+                            {s.title && (
+                              <a
+                                href={s.reddit_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="llm-staged-post-title"
+                                onClick={(e) => e.stopPropagation()}
+                                title="Open on Reddit"
+                              >
+                                {s.title}
+                              </a>
+                            )}
                           </div>
                           <p className="llm-staged-preview">
                             {s.body.slice(0, 200)}{s.body.length > 200 ? '...' : ''}

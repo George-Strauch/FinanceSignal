@@ -188,6 +188,7 @@
 }
 
 .llm-system-prompt {
+  min-height: 50vh;
   width: 100%;
   background: rgb(var(--secondary-color));
   border: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
@@ -314,6 +315,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.llm-staged-post-title:hover {
+  color: rgb(var(--accent));
 }
 
 .llm-staged-preview {

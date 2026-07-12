@@ -52,7 +52,16 @@ export default function PostCard({ post, highlightTicker }) {
   return (
     <div className="post-card">
       <div className="post-card-title-row">
-        <span className="post-card-title">{post.title}</span>
+        <a
+          href={post.reddit_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="post-card-title"
+          onClick={(e) => e.stopPropagation()}
+          title="Open on Reddit"
+        >
+          {post.title}
+        </a>
         <a
           href={post.reddit_url}
           target="_blank"

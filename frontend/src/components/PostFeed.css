@@ -156,6 +156,12 @@
   font-weight: 600;
   color: rgb(var(--hard-text));
   line-height: 1.3;
+  text-decoration: none;
+  flex: 1;
+}
+
+.post-card-title:hover {
+  color: rgb(var(--accent));
 }
 
 .post-card-ext-link {
