@@ -1008,7 +1008,7 @@ def ticker_detail(
             f"""
             SELECT COUNT(*) AS cnt,
                    COUNT(DISTINCT source_id) AS unique_posts
-            FROM ticker_mentions
+            FROM ticker_mentions tm
             WHERE ticker = ? AND created_utc >= ? AND source_type = 'post' {upper_cond}
             """,
             (ticker_upper, cutoff, *upper_params),
@@ -1019,7 +1019,7 @@ def ticker_detail(
         by_sub = db.conn.execute(
             f"""
             SELECT subreddit, COUNT(*) AS cnt
-            FROM ticker_mentions
+            FROM ticker_mentions tm
             WHERE ticker = ? AND created_utc >= ? AND source_type = 'post' {upper_cond}
             GROUP BY subreddit ORDER BY cnt DESC
             """,
@@ -1030,7 +1030,7 @@ def ticker_detail(
         time_rows = db.conn.execute(
             f"""
             SELECT created_utc, subreddit
-            FROM ticker_mentions
+            FROM ticker_mentions tm
             WHERE ticker = ? AND created_utc >= ? AND source_type = 'post' {upper_cond}
             """,
             (ticker_upper, cutoff, *upper_params),
@@ -1050,7 +1050,7 @@ def ticker_detail(
             f"""
             SELECT COUNT(*) AS cnt,
                    COUNT(DISTINCT CASE WHEN source_type = 'post' THEN source_id END) AS unique_posts
-            FROM ticker_mentions WHERE ticker = ? AND created_utc >= ? {upper_cond}
+            FROM ticker_mentions tm WHERE ticker = ? AND created_utc >= ? {upper_cond}
             """,
             (ticker_upper, cutoff, *upper_params),
         ).fetchone()
@@ -1060,7 +1060,7 @@ def ticker_detail(
         by_sub = db.conn.execute(
             f"""
             SELECT subreddit, COUNT(*) AS cnt
-            FROM ticker_mentions
+            FROM ticker_mentions tm
             WHERE ticker = ? AND created_utc >= ? {upper_cond}
             GROUP BY subreddit ORDER BY cnt DESC
             """,
@@ -1071,7 +1071,7 @@ def ticker_detail(
         time_rows = db.conn.execute(
             f"""
             SELECT created_utc, subreddit
-            FROM ticker_mentions
+            FROM ticker_mentions tm
             WHERE ticker = ? AND created_utc >= ? {upper_cond}
             """,
             (ticker_upper, cutoff, *upper_params),

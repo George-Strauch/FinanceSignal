@@ -515,9 +515,42 @@ export default function TickerDetail() {
   const subMentionSubs = subMentionData
     ? [...new Set(subMentionData.map((r) => r.subreddit))]
     : []
-  const subMentionChartData = subMentionData
+  const subMentionChartDataRaw = subMentionData
     ? pivotChartData(subMentionData, subMentionSubs)
     : []
+
+  // Pad subreddit chart with zero-filled entries for dates in price chart
+  // so both charts share the same x-axis domain and align pixel-perfectly
+  const allChartDates = new Set(mergedPriceData.map((d) => d.t))
+  const existingSubDates = new Set(subMentionChartDataRaw.map((d) => d.timestamp))
+  const subMentionChartData = [...subMentionChartDataRaw]
+  for (const d of allChartDates) {
+    if (!existingSubDates.has(d)) {
+      const entry = { timestamp: d }
+      for (const sub of subMentionSubs) entry[sub] = 0
+      subMentionChartData.push(entry)
+    }
+  }
+  subMentionChartData.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+
+  // Compute shared x-axis domain for both charts
+  const chartDomain = mergedPriceData.length > 0
+    ? [mergedPriceData[0].t, mergedPriceData[mergedPriceData.length - 1].t]
+    : null
+
+  // Click handler: clicking a point on the price chart or subreddit chart
+  // sets the post feed date filter to that day and switches to posts tab
+  const handleChartClick = useCallback((e) => {
+    if (!e || !e.activeLabel) return
+    const dateStr = e.activeLabel
+    const day = dateStr.slice(0, 10)
+    const [y, m, d] = day.split('-').map(Number)
+    const startTs = new Date(y, m - 1, d).getTime() / 1000
+    const endTs = new Date(y, m - 1, d, 23, 59, 59).getTime() / 1000
+    setPostDateFrom(startTs)
+    setPostDateTo(endTs)
+    setBottomTab('posts')
+  }, [])
 
   const priceChangePositive = marketInfo?.day_change != null && marketInfo.day_change >= 0
   const yahooUrl = `https://finance.yahoo.com/quote/${ticker?.toUpperCase()}`
@@ -814,10 +847,13 @@ export default function TickerDetail() {
         {priceData && priceData.length > 0 && (
           <div className="td-chart">
             <ResponsiveContainer width="100%" height={350}>
-              <ComposedChart data={mergedPriceData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <ComposedChart data={mergedPriceData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                onClick={mentionOverlay ? handleChartClick : undefined}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
                 <XAxis
                   dataKey="t"
+                  domain={chartDomain || ['auto', 'auto']}
                   tickFormatter={(t) => formatPriceTs(t, priceRange)}
                   tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
                   stroke="rgba(var(--soft-border), 0.5)"
@@ -893,10 +929,13 @@ export default function TickerDetail() {
         {subMentionChartData.length > 0 && (
           <div className="td-chart">
             <ResponsiveContainer width="100%" height={250}>
-              <AreaChart data={subMentionChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <AreaChart data={subMentionChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                onClick={handleChartClick}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--soft-border), 0.3)" />
                 <XAxis
                   dataKey="timestamp"
+                  domain={chartDomain || ['auto', 'auto']}
                   tickFormatter={(t) => formatPriceTs(t, priceRange)}
                   tick={{ fill: 'rgb(var(--soft-text))', fontSize: 12 }}
                   stroke="rgba(var(--soft-border), 0.5)"
