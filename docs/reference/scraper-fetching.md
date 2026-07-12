@@ -38,35 +38,46 @@ finding.
 
 ## Request flow
 
+The scraper is now **queue-driven**. On cycle start it enqueues a `/new/`
+listing fetch for each subreddit, then a worker loop claims rows from the
+`fetch_queue` table and processes them. Each listing may enqueue the next
+page (if no known post was found) and detail fetches for new posts.
+
 ```
-run_scraper_cycle (per subreddit, in a thread)
-  └─ _fetch_subreddit
-       ├─ loop: fetch_new_posts  → GET old.reddit.com/r/{sub}/new/?after=...
-       │    └─ parse_listing (BeautifulSoup) → [{kind:t3, data:{...}}, ...]
-       │
-       │    for each post not yet in DB:
-       │       └─ fetch_post_detail → GET old.reddit.com/r/{sub}/comments/{id}/
-       │            └─ parse_post_detail
-       │                 ├─ OP selftext (.thing.link .usertext-body .md)
-       │                 ├─ comments (.comment elements, flattened with depth)
-       │                 └─ media_links (post url + thumbnail + preview.redd.it)
-       │
-       │    upsert_post → posts table
-       │    upsert_comment → comments table
-       │    save_media_links → media_links table
-       │
-       │    if a post IS already in DB → caught up; stop paginating
-       │
-       └─ refresh comments for last-24h posts (re-fetch permalinks)
+run_scraper_cycle
+  ├─ enqueue a /new/ listing fetch for each subreddit → fetch_queue (status='ready')
+  └─ _process_queue (worker loop, in a thread)
+       └─ claim_next_fetch() → oldest 'ready' row (atomic, sets 'in_progress')
+            ├─ listing: fetch_new_posts → parse_listing
+            │    ├─ for each new post: upsert_post + enqueue detail fetch
+            │    ├─ for each known post: cheap upsert_post (refresh only)
+            │    └─ if page had new posts + has next cursor → enqueue next page
+            │
+            └─ detail: fetch_post_detail → parse_post_detail
+                 ├─ UPDATE posts SET selftext, selftext_html
+                 ├─ save_media_links
+                 └─ upsert_comment for each comment
 ```
+
+Every queue row records: `enqueued_at`, `claimed_at`, `fetch_started_at`,
+`fetch_completed_at`, `posts_fetched`, `posts_new`, `next_after`, `error`,
+and a nullable `log_id` linking to `process_logs`. The Process Monitor UI
+shows the queue as two tables (ready + past) with green/red status
+indicators and a Wait Time column (delta from enqueue to completion).
 
 ### Pagination / coverage
 
-`/new/` is newest-first, ~25 posts/page (the JSON API gave 100/page). The
-scraper paginates via the `after` cursor until it hits a post ID already in
-the DB (meaning everything older is already known), capped at
-`MAX_PAGES_PER_CYCLE = 10` (~250 posts). This guarantees full coverage with
-no gaps — no relying on the next cycle to catch up.
+`/new/` is newest-first, ~25 posts/page (the JSON API gave 100/page).
+Each listing row enqueues the next page via the `after` cursor **only if
+the page contained new posts**. A page with zero new posts means we're
+caught up — no next page is enqueued. Capped at `MAX_PAGES_PER_CYCLE = 10`
+(~250 posts per subreddit per cycle).
+
+### Restart resilience
+
+The queue is durable in SQLite. If the scraper is killed mid-cycle, the
+ready rows stay ready and in_progress rows are reset to ready on the next
+start. No posts are missed — the queue just resumes where it left off.
 
 ### Selftext from the permalink, not the listing
 
@@ -144,10 +155,13 @@ preserved exactly.
 | File | Role |
 |---|---|
 | `src/sentinel/config.py` | `USER_AGENT` — browser-style UA (script UA triggered blocks) |
-| `src/sentinel/reddit_html.py` | HTML parsers + `detect_honeypot()` |
+| `src/sentinel/reddit_html.py` | HTML parsers + `detect_honeypot()` + `is_valid_response()` |
 | `src/sentinel/fetcher.py` | `RedditFetcher` — `requests` GETs + throttle + honeypot retry |
-| `app/scraper.py` | `_fetch_subreddit` — paginate + permalink selftext + comment refresh |
-| `app/backfetch.py` | Historical backfill — uses same `RedditFetcher` (auto-fixed) |
+| `src/sentinel/db.py` | `fetch_queue` table + queue methods (enqueue, claim, mark, query) |
+| `app/scraper.py` | Queue-driven cycle: enqueue listings, `_process_queue` worker, `_process_listing_row` + `_process_detail_row` |
+| `app/backfetch.py` | Historical backfill — 10 fixed pages, no dedup, no comments |
+| `app/routers/processes.py` | `/fetch-queue` endpoint — returns ready + past rows with totals |
+| `frontend/src/pages/ProcessMonitor.jsx` | Queue UI — ready + past tables, 80vh scroll, infinite scroll, wait time column |
 | `processes.json` | Scraper cycle = 60 min (was 30) to fit pagination + per-post fetches |
 
 ## Known limitations
