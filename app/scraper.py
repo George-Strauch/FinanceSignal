@@ -108,13 +108,6 @@ async def run_scraper_cycle(state: ScraperState):
 
     state.current_subreddit = None
 
-    if not state._stop_event.is_set():
-        try:
-            await asyncio.to_thread(_process_tickers)
-        except Exception:
-            logger.exception("Ticker processing failed")
-            state.errors_this_cycle += 1
-
     state.last_completed_cycle = time.time()
     state.total_cycles_completed += 1
     state.total_errors += state.errors_this_cycle

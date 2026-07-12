@@ -1023,6 +1023,25 @@ class RedditDatabase:
         except sqlite3.IntegrityError:
             return None
 
+    def enqueue_ner_batch(self, rows: list[dict]) -> int:
+        """Bulk-enqueue sources for NER extraction. Each dict: source_type,
+        source_id, subreddit, created_utc. Returns count of newly inserted rows."""
+        if not rows:
+            return 0
+        now = time.time()
+        data = [
+            (r["source_type"], r["source_id"], r.get("subreddit"),
+             r.get("created_utc"), 'ready', now)
+            for r in rows
+        ]
+        cur = self.conn.executemany("""
+            INSERT OR IGNORE INTO ner_queue
+                (source_type, source_id, subreddit, created_utc, status, enqueued_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, data)
+        self.conn.commit()
+        return cur.rowcount
+
     def claim_next_ner(self) -> dict | None:
         """Atomically claim the oldest 'ready' NER row."""
         cur = self.conn.execute("""

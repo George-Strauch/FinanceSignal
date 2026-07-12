@@ -39,13 +39,13 @@
         },
         {
             "id": "ner_extraction",
-            "name": "NER Extraction",
-            "description": "Extract named entities (people, companies, etc.) from posts and comments using spaCy. Drains the ner_queue and enqueues relevance scoring for extracted entities.",
+            "name": "NER + Ticker Extraction",
+            "description": "Continuous queue-driven extraction of named entities (spaCy) and ticker mentions (regex) from posts and comments. Enqueues relevance scoring for all extracted entities. Polls every 10s when queue is empty.",
             "module": "app.ner_processor",
             "function": "run_ner_extraction",
-            "type": "oneshot",
-            "auto_start": false,
-            "on_failure": "stop"
+            "type": "continuous",
+            "auto_start": true,
+            "on_failure": "restart"
         },
         {
             "id": "relevance_scoring",

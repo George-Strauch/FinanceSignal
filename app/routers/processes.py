@@ -130,6 +130,56 @@ async def get_process(job_id: str, db: RedditDatabase = Depends(get_db)):
             "per_subreddit": per_subreddit,
         }
 
+    # NER extraction monitor
+    if job_id == "ner_extraction" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "current_phase": state.current_phase,
+            "sources_processed": state.sources_processed,
+            "entities_found": state.entities_found,
+            "tickers_found": state.tickers_found,
+            "relevance_enqueued": state.relevance_enqueued,
+            "errors": state.errors,
+            "batches_processed": state.batches_processed,
+            "empty_polls": state.empty_polls,
+        }
+
+    # Relevance scoring monitor
+    if job_id == "relevance_scoring" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "current_phase": state.current_phase,
+            "pairs_scored": state.pairs_scored,
+            "pairs_requeued": state.pairs_requeued,
+            "pairs_failed": state.pairs_failed,
+            "errors": state.errors,
+        }
+
+    # Relevance backfill monitor
+    if job_id == "relevance_backfill" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "current_phase": state.current_phase,
+            "ticker_pairs_enqueued": state.ticker_pairs_enqueued,
+            "ner_pairs_enqueued": state.ner_pairs_enqueued,
+            "pairs_skipped_short": state.pairs_skipped_short,
+            "errors": state.errors,
+        }
+
+    # Backfetch monitor
+    if job_id == "backfetch" and proc.job_state is not None:
+        state = proc.job_state
+        result["monitor"] = {
+            "posts_new": state.posts_new,
+            "posts_updated": state.posts_updated,
+            "comments": state.comments,
+            "pages_fetched": state.pages_fetched,
+            "subs_completed": state.subs_completed,
+            "current_subreddit": state.current_subreddit,
+            "errors": state.errors,
+            "termination_reason": state.termination_reason,
+        }
+
     return result
 
 
