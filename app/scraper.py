@@ -110,14 +110,16 @@ MAX_PAGES_PER_CYCLE = 10  # Safety cap — ~250 posts per subreddit per cycle
 
 
 def _fetch_subreddit(subreddit: str, state: ScraperState):
-    """Paginate /new/ for a subreddit until caught up to already-seen posts,
-    fetching each new post's permalink for selftext + comments in one request.
-    Then refresh comments for recent posts (last 24h). Runs in a thread.
+    """Paginate /new/ for a subreddit, fetching each new post's permalink for
+    selftext + comments in one request. Then refresh comments for recent posts
+    (last 24h). Runs in a thread.
 
-    Coverage strategy: /new/ is newest-first. We keep paginating until we hit
-    a post ID already in the DB (everything older is already known) or the
-    MAX_PAGES cap. Each new post gets a permalink fetch which yields the OP
-    selftext AND the comment tree in a single request.
+    Restart resilience: we do NOT stop on the first existing post. If the
+    scraper was killed mid-cycle last time, the already-fetched posts would
+    make us stop too early and we'd miss posts we never reached. Instead we
+    keep paginating, cheaply refreshing existing posts (listing-only upsert,
+    no permalink fetch), and only stop when a full page has zero new posts
+    (truly caught up) or we hit MAX_PAGES_PER_CYCLE.
     """
     fetcher = RedditFetcher(min_interval=state.request_delay)
     fetch_start = time.time()
@@ -129,10 +131,19 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
 
     with RedditDatabase() as db:
         after = None
-        caught_up = False
         pages = 0
 
-        while not state._stop_event.is_set() and pages < MAX_PAGES_PER_CYCLE and not caught_up:
+        # Paginate /new/ (newest-first) until either:
+        #   - we hit the MAX_PAGES cap, or
+        #   - a full page has zero new posts (truly caught up), or
+        #   - there's no next-page cursor.
+        # We do NOT stop on the first existing post — if the scraper was
+        # killed mid-cycle last time, the already-fetched posts would make us
+        # stop too early and we'd miss posts we never reached. Existing posts
+        # just get a cheap listing-only upsert (refresh score/num_comments);
+        # only genuinely new posts trigger a permalink fetch for selftext +
+        # comments + media.
+        while not state._stop_event.is_set() and pages < MAX_PAGES_PER_CYCLE:
             try:
                 response = fetcher.fetch_new_posts(subreddit, limit=DEFAULT_PAGE_LIMIT, after=after)
             except Exception:
@@ -147,6 +158,7 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
             if not posts:
                 break
 
+            page_new = 0
             for raw_post in posts:
                 if state._stop_event.is_set():
                     break
@@ -157,19 +169,18 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
                         continue
                     seen_local.add(post_id)
 
-                    # Caught up? — this post is already in the DB, so everything
-                    # older on /new/ is already known. Refresh its score/num_comments
-                    # then stop paginating.
                     existing = db.conn.execute(
                         "SELECT 1 FROM posts WHERE id = ?", (post_id,)
                     ).fetchone()
                     if existing:
+                        # Already known — cheap refresh of listing fields only.
+                        # No permalink fetch (selftext/comments already stored).
                         db.upsert_post(raw_post, subreddit)
                         total_updated += 1
-                        caught_up = True
-                        break
+                        continue
 
                     # New post — fetch permalink for selftext + comments + media
+                    detail = None
                     try:
                         detail = fetcher.fetch_post_detail(subreddit, post_id)
                         detail_post = (detail.get("post") or {}).get("data", {})
@@ -182,21 +193,32 @@ def _fetch_subreddit(subreddit: str, state: ScraperState):
 
                     db.upsert_post(raw_post, subreddit)
                     total_new += 1
+                    page_new += 1
                     new_post_ids.add(post_id)
 
-                    media_links = detail.get("media_links") if "detail" in locals() else None
+                    media_links = detail.get("media_links") if detail else None
                     if not media_links:
                         media_links = fetcher.extract_media_links(raw_post)
                     if media_links:
                         db.save_media_links(post_id, media_links)
 
-                    comments = detail.get("comments", []) if "detail" in locals() else []
+                    comments = detail.get("comments", []) if detail else []
                     for comment in comments:
                         db.upsert_comment(comment, post_id)
                     total_comments += len(comments)
                 except Exception:
                     logger.exception("Post processing failed in r/%s", subreddit)
                     state.errors_this_cycle += 1
+
+            logger.info(
+                "r/%s page %d — %d new, %d updated",
+                subreddit, pages, page_new, len(posts) - page_new,
+            )
+
+            # Truly caught up: a full page with zero new posts means everything
+            # older is already in the DB.
+            if page_new == 0:
+                break
 
             if not after:
                 break
