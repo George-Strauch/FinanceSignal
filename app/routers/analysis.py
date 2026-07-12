@@ -84,14 +84,11 @@ AVAILABLE_MODELS = [
     {"id": "anthropic/claude-sonnet-4", "label": "Claude Sonnet 4", "supports_tools": True},
     {"id": "anthropic/claude-opus-4.6", "label": "Claude Opus 4.6", "supports_tools": True},
     {"id": "anthropic/claude-opus-4.8", "label": "Claude Opus 4.8", "supports_tools": True},
-    {"id": "openai/gpt-4o", "label": "GPT-4o", "supports_tools": True},
-    {"id": "openai/o4-mini", "label": "o4-mini", "supports_tools": True},
-    {"id": "openai/o3", "label": "o3", "supports_tools": True},
-    {"id": "google/gemini-2.5-pro", "label": "Gemini 2.5 Pro", "supports_tools": True},
-    {"id": "anthropic/claude-opus-4", "label": "Claude Opus 4", "supports_tools": True},
     {"id": "z-ai/glm-5.2", "label": "GLM-5.2", "supports_tools": True},
-    {"id": "deepseek/deepseek-r1", "label": "DeepSeek R1", "supports_tools": True},
-    {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini", "supports_tools": True},
+    {"id": "qwen/qwen3.7-max", "label": "Qwen3.7 Max", "supports_tools": True},
+    {"id": "minimax/m3", "label": "MiniMax M3", "supports_tools": True},
+    {"id": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash", "supports_tools": True},
+    {"id": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash", "supports_tools": True},
 ]
 
 TOOL_DEFINITIONS = [
