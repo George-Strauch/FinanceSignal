@@ -57,6 +57,7 @@ def process_listing_row(db, fetcher, row, source: str, cycle_id: int,
     posts = response["posts"]
     next_after = response.get("after")
     page_new = 0
+    page_needs_work = 0  # posts that are new OR need a detail fetch
 
     for raw_post in posts:
         try:
@@ -66,16 +67,38 @@ def process_listing_row(db, fetcher, row, source: str, cycle_id: int,
                 continue
 
             existing = db.conn.execute(
-                "SELECT 1 FROM posts WHERE id = ?", (post_id,)
+                "SELECT selftext FROM posts WHERE id = ?", (post_id,)
             ).fetchone()
             if existing:
+                # Already known — cheap refresh
                 db.upsert_post(raw_post, subreddit)
                 counters.posts_updated += 1
+                # Re-enqueue detail fetch if selftext is missing (previous
+                # detail fetch failed or never ran)
+                if not existing["selftext"]:
+                    has_pending = db.conn.execute(
+                        """SELECT 1 FROM fetch_queue
+                           WHERE subreddit = ? AND url LIKE ? AND status IN ('ready', 'in_progress')
+                           LIMIT 1""",
+                        (subreddit, f"%/comments/{post_id}/%")
+                    ).fetchone()
+                    if not has_pending:
+                        detail_url = f"https://old.reddit.com/r/{subreddit}/comments/{post_id}/"
+                        db.enqueue_fetch(
+                            subreddit=subreddit,
+                            url=detail_url,
+                            fetch_type="detail",
+                            page_num=page_num,
+                            cycle_id=cycle_id,
+                            source=source,
+                        )
+                        page_needs_work += 1
                 continue
 
             db.upsert_post(raw_post, subreddit)
             counters.posts_new += 1
             page_new += 1
+            page_needs_work += 1
 
             media_links = fetcher.extract_media_links(raw_post)
             if media_links:
@@ -98,14 +121,15 @@ def process_listing_row(db, fetcher, row, source: str, cycle_id: int,
                           posts_new=page_new, next_after=next_after)
 
     logger.info(
-        "r/%s page %d — %d new, %d updated",
-        subreddit, page_num, page_new, len(posts) - page_new,
+        "r/%s page %d — %d new, %d updated, %d need detail",
+        subreddit, page_num, page_new, len(posts) - page_new, page_needs_work,
     )
 
     # Next page policy
     pages_per_sub[subreddit] = pages_per_sub.get(subreddit, 0) + 1
     if source == "scraper":
-        enqueue_next = page_new > 0 and next_after and pages_per_sub[subreddit] < max_pages
+        # Keep paginating if we found new posts OR re-enqueued pending details
+        enqueue_next = page_needs_work > 0 and next_after and pages_per_sub[subreddit] < max_pages
     else:
         enqueue_next = bool(next_after and pages_per_sub[subreddit] < max_pages)
 

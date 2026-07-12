@@ -9,13 +9,9 @@ from dataclasses import dataclass, field
 from sentinel.config import load_subreddits, DEFAULT_PAGE_LIMIT
 from sentinel.db import RedditDatabase
 from sentinel.fetcher import RedditFetcher
-from sentinel.tickers import extract_tickers, extract_text_from_post, extract_text_from_comment
-from sentinel.relevance_utils import build_post_document, build_comment_document, build_ticker_query, should_score
 from app.fetch_processor import FetchCounters, process_listing_row, process_detail_row
 
 logger = logging.getLogger(__name__)
-
-BATCH_SIZE = 1000
 
 
 @dataclass
@@ -162,113 +158,72 @@ def _process_queue(state: ScraperState, cycle_id: int):
             stats.last_fetched = time.time()
 
 
-def _process_tickers():
-    """Run ticker extraction on unprocessed posts and comments (runs in thread).
-
-    After saving ticker mentions, enqueues relevance scoring for each mention
-    where the source text is > 15 words.
-    """
-    with RedditDatabase() as db:
-        # Process posts
-        while True:
-            posts = db.get_unprocessed_posts(limit=BATCH_SIZE)
-            if not posts:
-                break
-            mentions = []
-            for post in posts:
-                text = extract_text_from_post(post)
-                tickers = extract_tickers(text)
-                for ticker in tickers:
-                    mentions.append({
-                        "source_type": "post",
-                        "source_id": post["id"],
-                        "ticker": ticker,
-                        "subreddit": post.get("subreddit"),
-                        "created_utc": post.get("created_utc"),
-                    })
-                db.mark_processed("post", post["id"])
-            if mentions:
-                db.save_ticker_mentions(mentions)
-                _enqueue_relevance_for_ticker_mentions(db, mentions, posts, "post")
-            db.commit()
-
-        # Process comments
-        while True:
-            comments = db.get_unprocessed_comments(limit=BATCH_SIZE)
-            if not comments:
-                break
-            mentions = []
-            for comment in comments:
-                text = extract_text_from_comment(comment)
-                tickers = extract_tickers(text)
-                for ticker in tickers:
-                    mentions.append({
-                        "source_type": "comment",
-                        "source_id": comment["id"],
-                        "ticker": ticker,
-                        "subreddit": comment.get("subreddit"),
-                        "created_utc": comment.get("created_utc"),
-                    })
-                db.mark_processed("comment", comment["id"])
-            if mentions:
-                db.save_ticker_mentions(mentions)
-                _enqueue_relevance_for_ticker_mentions(db, mentions, comments, "comment")
-            db.commit()
-
-
-def _enqueue_relevance_for_ticker_mentions(db: RedditDatabase,
-                                           mentions: list[dict],
-                                           sources: list[dict],
-                                           source_type: str):
-    """Enqueue relevance scoring for ticker mentions where text > 15 words.
-
-    Builds the document text from the source and the query from the ticker +
-    resolved company name (if available).
-    """
-    source_map = {s["id"]: s for s in sources}
-    for m in mentions:
-        source = source_map.get(m["source_id"])
-        if not source:
-            continue
-        if source_type == "post":
-            document = build_post_document(source.get("title"), source.get("selftext"))
-        else:
-            document = build_comment_document(source.get("body"))
-
-        if not should_score(document):
-            continue
-
-        # Look up company name from fundamentals
-        company_name = None
-        try:
-            fund = db.get_latest_fundamentals(m["ticker"])
-            if fund and fund.get("name"):
-                company_name = fund["name"]
-        except Exception:
-            pass
-
-        query = build_ticker_query(m["ticker"], company_name)
-        db.enqueue_relevance(
-            source_type=source_type,
-            source_id=m["source_id"],
-            entity_type="ticker",
-            entity_ref=m["ticker"].upper(),
-            entity_text=query,
-            document_text=document,
-        )
-
-
 def reprocess_all_tickers():
-    """Re-extract tickers from all posts and comments (one-time cleanup).
+    """Re-extract tickers + named entities from all posts and comments.
 
-    Resets all processed markers and re-runs ticker extraction from scratch.
-    Runs synchronously in a thread via the process manager.
+    Clears the processed markers and ticker_mentions, then bulk-enqueues
+    all posts and comments into the ner_queue. The NER job will re-extract
+    both named entities and tickers, and enqueue relevance scoring.
     """
-    logger.info("Starting full ticker reprocess")
+    logger.info("Starting full ticker + NER reprocess")
     with RedditDatabase() as db:
         db.conn.execute("DELETE FROM processed_sources")
+        db.conn.execute("DELETE FROM ner_processed_sources")
         db.conn.execute("DELETE FROM ticker_mentions")
-        db.commit()
+        db.conn.commit()
     logger.info("Cleared processed markers and ticker mentions")
-    _process_tickers()
-    logger.info("Ticker reprocess complete")
+
+    # Bulk-enqueue all posts and comments into the ner_queue
+    with RedditDatabase() as db:
+        total = 0
+        # Posts
+        while True:
+            posts = db.conn.execute(
+                "SELECT id, subreddit, created_utc FROM posts ORDER BY created_utc DESC LIMIT 50000"
+            ).fetchall()
+            if not posts:
+                break
+            rows = [
+                {"source_type": "post", "source_id": p["id"],
+                 "subreddit": p["subreddit"], "created_utc": p["created_utc"]}
+                for p in posts
+            ]
+            total += db.enqueue_ner_batch(rows)
+            for p in posts:
+                db.mark_ner_processed("post", p["id"])
+            db.commit()
+            if len(posts) < 50000:
+                break
+
+        # Comments
+        while True:
+            comments = db.conn.execute(
+                "SELECT id, post_id, created_utc FROM comments ORDER BY created_utc DESC LIMIT 50000"
+            ).fetchall()
+            if not comments:
+                break
+            # Get subreddit from parent posts
+            post_ids = list({c["post_id"] for c in comments})
+            placeholders = ",".join("?" * len(post_ids))
+            post_subs = {
+                r["id"]: r["subreddit"]
+                for r in db.conn.execute(
+                    f"SELECT id, subreddit FROM posts WHERE id IN ({placeholders})",
+                    post_ids
+                ).fetchall()
+            }
+            rows = [
+                {"source_type": "comment", "source_id": c["id"],
+                 "subreddit": post_subs.get(c["post_id"]),
+                 "created_utc": c["created_utc"]}
+                for c in comments
+            ]
+            total += db.enqueue_ner_batch(rows)
+            for c in comments:
+                db.mark_ner_processed("comment", c["id"])
+            db.commit()
+            if len(comments) < 50000:
+                break
+
+    logger.info("Re-enqueued %d sources into ner_queue for reprocessing", total)
+    logger.info("Ticker reprocess complete — NER job will process the queue")
