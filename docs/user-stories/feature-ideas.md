@@ -18,3 +18,4 @@ A running list of future feature ideas. Append new ideas here as they arise duri
 - **Bot performance dashboard** — Aggregate view comparing all bots' performance over time with equity curves overlay
 - **Market regime detection** — Feed market-wide stats (VIX, breadth, sector rotation) into bot data points for regime-aware strategies
 - **Bot alerts/notifications** — Push notifications (email, Slack, webhook) when a bot opens/closes trades or triggers stop loss
+- **Event Watcher** — LLM-extracted forward-looking market events (mergers, earnings, regulatory decisions) managed via tool calls, with a dedicated sidebar page for tracking active and resolved events *(Planned — Story 23)*

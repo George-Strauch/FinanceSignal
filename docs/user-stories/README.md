@@ -18,6 +18,7 @@ Stories are numbered in dependency order — later stories build on earlier ones
 | 6 — Subreddit Mgmt UI   | 14     | Subreddit CRUD page |
 | 7 — Enhancements        | 15–20 | Sentiment, comparison, heatmap, export, watchlist, alerts |
 | 8 — Historical Analysis | 22    | Historical evaluations, ticker discovery, extended windows |
+| 9 — LLM-Augmented Analysis | 23 | Event watcher, LLM tool calls, forward-looking signal tracking |
 
 ## Story Format
 
@@ -62,3 +63,4 @@ When implementing stories, follow these rules:
 | 19 | Watchlist | not started |
 | 20 | Mention Velocity Alerts | not started |
 | 22 | Historical Evaluations & Time-Aware Discovery | not started |
+| 23 | Event Watcher: LLM-Managed Market Event Tracking | not started |
