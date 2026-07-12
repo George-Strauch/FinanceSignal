@@ -41,8 +41,8 @@ function dateStr(d) {
 }
 
 /** Floor a date to the start of its granularity bucket */
-function floorToBucket(dateStr, granularity) {
-  const d = parseDateStr(dateStr)
+function floorToBucket(ds, granularity) {
+  const d = parseDateStr(ds)
   if (granularity === 'week') {
     const monday = new Date(d)
     monday.setDate(d.getDate() - d.getDay())
@@ -51,7 +51,7 @@ function floorToBucket(dateStr, granularity) {
   if (granularity === 'month') {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
   }
-  return dateStr
+  return ds
 }
 
 /** Format a timestamp string for human-readable display */
