@@ -43,6 +43,15 @@ function scheduleLabel(schedule) {
   return `every ${mins}m`
 }
 
+function formatDuration(isoA, isoB) {
+  if (!isoA || !isoB) return '—'
+  const ms = Math.abs(new Date(isoB).getTime() - new Date(isoA).getTime())
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
+  return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`
+}
+
 // Derive a run mode from type + schedule:
 //   continuous → runs forever until stopped
 //   oneshot + schedule → recurring scheduled job (runs, waits, repeats)
@@ -87,6 +96,7 @@ export default function ProcessMonitor() {
   const [editConfig, setEditConfig] = useState({})
   const [saveLoading, setSaveLoading] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [fetchQueue, setFetchQueue] = useState(null)
   const logRef = useRef(null)
   const prevSelectedRef = useRef(null)
   const [now, setNow] = useState(Date.now())
@@ -139,12 +149,56 @@ export default function ProcessMonitor() {
     if (!selectedJobId) {
       setJobDetail(null)
       setLogs([])
+      setFetchQueue(null)
       return
     }
     fetchDetail(selectedJobId)
     const id = setInterval(() => fetchDetail(selectedJobId), 5000)
     return () => clearInterval(id)
   }, [selectedJobId, fetchDetail])
+
+  // Fetch queue for reddit_scraper
+  const [pastLimit, setPastLimit] = useState(50)
+  const pastLimitRef = useRef(50)
+  pastLimitRef.current = pastLimit
+
+  const fetchFetchQueue = useCallback(async (jobId) => {
+    try {
+      const data = await get(`/processes/${jobId}/fetch-queue?past_limit=${pastLimitRef.current}`)
+      setFetchQueue(data)
+    } catch {
+      // 404 for non-scraper jobs — just clear
+      setFetchQueue(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedJobId !== 'reddit_scraper') {
+      setFetchQueue(null)
+      setPastLimit(50)
+      return
+    }
+    fetchFetchQueue(selectedJobId)
+    const id = setInterval(() => fetchFetchQueue(selectedJobId), 3000)
+    return () => clearInterval(id)
+  }, [selectedJobId, fetchFetchQueue])
+
+  // Load more past rows
+  const loadMorePast = useCallback(() => {
+    if (!fetchQueue) return
+    if (fetchQueue.past.length >= fetchQueue.past_total) return
+    setPastLimit((l) => l + 50)
+    fetchFetchQueue('reddit_scraper')
+  }, [fetchQueue, fetchFetchQueue])
+
+  // Scroll handler for past table
+  const pastTableRef = useRef(null)
+  const handlePastScroll = useCallback((e) => {
+    const el = e.currentTarget
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
+      loadMorePast()
+    }
+  }, [loadMorePast])
 
   // Initialize param values and reset edit mode when selecting a job
   useEffect(() => {
@@ -692,6 +746,129 @@ export default function ProcessMonitor() {
     )
   }
 
+  // Fetch Queue rendering (reddit_scraper only)
+  const renderFetchQueue = () => {
+    if (!fetchQueue) return null
+    const { ready, past, stats } = fetchQueue
+
+    const statusDot = (status) => {
+      if (status === 'success') return 'fq-dot-success'
+      if (status === 'failed') return 'fq-dot-failed'
+      if (status === 'in_progress') return 'fq-dot-progress'
+      return 'fq-dot-ready'
+    }
+
+    return (
+      <>
+        {/* Queue summary stats */}
+        <div className="dash-card">
+          <h2>Fetch Queue</h2>
+          <div className="fq-stats-grid">
+            <div className="stat-item">
+              <div className="stat-value">{stats.ready || 0}</div>
+              <div className="stat-label">Ready</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-value">{stats.in_progress || 0}</div>
+              <div className="stat-label">In Progress</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-value" style={{ color: 'rgb(46, 204, 113)' }}>{stats.success || 0}</div>
+              <div className="stat-label">Success</div>
+            </div>
+            <div className="stat-item">
+              <div className="stat-value" style={{ color: 'rgb(239, 68, 68)' }}>{stats.failed || 0}</div>
+              <div className="stat-label">Failed</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Ready / in-progress queue */}
+        <div className="dash-card">
+          <h2>Queue ({ready.length})</h2>
+          {ready.length === 0 ? (
+            <p className="fq-empty">Queue is empty — waiting for cycle to enqueue fetches.</p>
+          ) : (
+            <div className="fq-table-wrap">
+              <table className="fq-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Subreddit</th>
+                    <th>Type</th>
+                    <th>Page</th>
+                    <th>Status</th>
+                    <th>Enqueued</th>
+                    <th>URL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ready.map((r) => (
+                    <tr key={r.id}>
+                      <td><span className={`fq-status-dot ${statusDot(r.status)}`} /></td>
+                      <td className="fq-sub">r/{r.subreddit}</td>
+                      <td><span className={`fq-type-badge fq-type-${r.fetch_type}`}>{r.fetch_type}</span></td>
+                      <td>{r.page_num}</td>
+                      <td className="fq-status-cell">{r.status === 'in_progress' ? 'running…' : 'ready'}</td>
+                      <td className="fq-time">{formatTime(r.enqueued_at)}</td>
+                      <td className="fq-url-cell" title={r.url}>{r.url.replace('https://old.reddit.com', '')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Past fetches history */}
+        <div className="dash-card">
+          <h2>Recent Fetches ({past.length}{fetchQueue.past_total > past.length ? ` of ${fetchQueue.past_total}` : ''})</h2>
+          {past.length === 0 ? (
+            <p className="fq-empty">No completed fetches yet.</p>
+          ) : (
+            <div className="fq-table-wrap" ref={pastTableRef} onScroll={handlePastScroll}>
+              <table className="fq-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Subreddit</th>
+                    <th>Type</th>
+                    <th>Page</th>
+                    <th>Posts</th>
+                    <th>New</th>
+                    <th>Status</th>
+                    <th>Wait Time</th>
+                    <th>Completed</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {past.map((r) => (
+                    <tr key={r.id} className={r.status === 'failed' ? 'fq-row-failed' : ''}>
+                      <td><span className={`fq-status-dot ${statusDot(r.status)}`} /></td>
+                      <td className="fq-sub">r/{r.subreddit}</td>
+                      <td><span className={`fq-type-badge fq-type-${r.fetch_type}`}>{r.fetch_type}</span></td>
+                      <td>{r.page_num}</td>
+                      <td>{r.posts_fetched ?? '-'}</td>
+                      <td>{r.posts_new ?? '-'}</td>
+                      <td className={`fq-status-cell fq-status-${r.status}`}>{r.status}</td>
+                      <td className="fq-time">{formatDuration(r.enqueued_at, r.fetch_completed_at)}</td>
+                      <td className="fq-time">{formatTime(r.fetch_completed_at)}</td>
+                      <td className="fq-error-cell" title={r.error || ''}>{r.error || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {past.length < fetchQueue.past_total && (
+                <div className="fq-load-more">Scroll to load more ({fetchQueue.past_total - past.length} remaining)</div>
+              )}
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
   return (
     <div className="process-monitor">
       <div className="process-header">
@@ -737,6 +914,7 @@ export default function ProcessMonitor() {
           {renderScheduleStatus()}
           {renderParamInputs()}
           {jobDetail.monitor ? renderScraperDetail() : renderGenericDetail()}
+          {renderFetchQueue()}
 
           {/* Log Viewer */}
           <div className="dash-card">

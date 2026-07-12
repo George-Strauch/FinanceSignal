@@ -506,6 +506,30 @@ class RedditDatabase:
             CREATE INDEX IF NOT EXISTS idx_process_logs_job ON process_logs(job_id);
             CREATE INDEX IF NOT EXISTS idx_process_logs_level ON process_logs(level);
             CREATE INDEX IF NOT EXISTS idx_process_logs_job_ts ON process_logs(job_id, ts);
+
+            CREATE TABLE IF NOT EXISTS fetch_queue (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                subreddit       TEXT NOT NULL,
+                url             TEXT NOT NULL,
+                fetch_type      TEXT NOT NULL DEFAULT 'listing',
+                after_cursor    TEXT,
+                page_num        INTEGER DEFAULT 1,
+                status          TEXT NOT NULL DEFAULT 'ready',
+                enqueued_at     REAL NOT NULL,
+                claimed_at      REAL,
+                fetch_started_at REAL,
+                fetch_completed_at REAL,
+                posts_fetched   INTEGER DEFAULT 0,
+                posts_new       INTEGER DEFAULT 0,
+                next_after      TEXT,
+                error           TEXT,
+                log_id          INTEGER,
+                cycle_id        INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_fq_status ON fetch_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_fq_subreddit ON fetch_queue(subreddit);
+            CREATE INDEX IF NOT EXISTS idx_fq_cycle ON fetch_queue(cycle_id);
+            CREATE INDEX IF NOT EXISTS idx_fq_ready ON fetch_queue(status, enqueued_at);
         """)
         self.conn.commit()
 
@@ -747,6 +771,133 @@ class RedditDatabase:
             time.time(), duration_seconds,
         ))
         self.conn.commit()
+
+    # ── Fetch queue ────────────────────────────────────────────────────
+
+    def enqueue_fetch(self, subreddit: str, url: str,
+                      fetch_type: str = "listing",
+                      after_cursor: str | None = None,
+                      page_num: int = 1,
+                      cycle_id: int | None = None) -> int:
+        """Add a row to the fetch queue. Returns the row id."""
+        cur = self.conn.execute("""
+            INSERT INTO fetch_queue
+                (subreddit, url, fetch_type, after_cursor, page_num,
+                 status, enqueued_at, cycle_id)
+            VALUES (?, ?, ?, ?, ?, 'ready', ?, ?)
+        """, (subreddit, url, fetch_type, after_cursor, page_num,
+              time.time(), cycle_id))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def claim_next_fetch(self) -> dict | None:
+        """Atomically claim the oldest 'ready' row. Returns it as a dict
+        or None if the queue is empty. Sets status='in_progress'."""
+        cur = self.conn.execute("""
+            UPDATE fetch_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id = (
+                SELECT id FROM fetch_queue
+                WHERE status = 'ready'
+                ORDER BY enqueued_at ASC
+                LIMIT 1
+            )
+            RETURNING id
+        """, (time.time(),))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        full = self.conn.execute(
+            "SELECT * FROM fetch_queue WHERE id = ?", (row[0],)
+        ).fetchone()
+        self.conn.commit()
+        return dict(full) if full else None
+
+    def mark_fetch_success(self, queue_id: int, posts_fetched: int,
+                           posts_new: int, next_after: str | None = None,
+                           log_id: int | None = None):
+        """Mark a fetch as completed successfully."""
+        self.conn.execute("""
+            UPDATE fetch_queue
+            SET status = 'success',
+                fetch_completed_at = ?,
+                posts_fetched = ?,
+                posts_new = ?,
+                next_after = ?,
+                log_id = ?
+            WHERE id = ?
+        """, (time.time(), posts_fetched, posts_new, next_after, log_id, queue_id))
+        self.conn.commit()
+
+    def mark_fetch_failed(self, queue_id: int, error: str,
+                          log_id: int | None = None):
+        """Mark a fetch as failed."""
+        self.conn.execute("""
+            UPDATE fetch_queue
+            SET status = 'failed',
+                fetch_completed_at = ?,
+                error = ?,
+                log_id = ?
+            WHERE id = ?
+        """, (time.time(), error, log_id, queue_id))
+        self.conn.commit()
+
+    def mark_fetch_started(self, queue_id: int):
+        """Record the moment a fetch's HTTP request begins."""
+        self.conn.execute(
+            "UPDATE fetch_queue SET fetch_started_at = ? WHERE id = ?",
+            (time.time(), queue_id)
+        )
+        self.conn.commit()
+
+    def get_ready_queue(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Return 'ready' and 'in_progress' rows, oldest first."""
+        rows = self.conn.execute("""
+            SELECT * FROM fetch_queue
+            WHERE status IN ('ready', 'in_progress')
+            ORDER BY enqueued_at ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_past_fetches(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Return completed (success/failed) rows, newest first."""
+        rows = self.conn.execute("""
+            SELECT * FROM fetch_queue
+            WHERE status IN ('success', 'failed')
+            ORDER BY fetch_completed_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_ready_queue(self) -> int:
+        """Count of ready + in_progress rows."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM fetch_queue WHERE status IN ('ready', 'in_progress')"
+        ).fetchone()[0]
+
+    def count_past_fetches(self) -> int:
+        """Count of success + failed rows."""
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM fetch_queue WHERE status IN ('success', 'failed')"
+        ).fetchone()[0]
+
+    def clear_ready_queue(self):
+        """Remove all 'ready' rows (e.g. on cycle abort). Does not touch
+        in_progress rows."""
+        self.conn.execute(
+            "DELETE FROM fetch_queue WHERE status = 'ready'"
+        )
+        self.conn.commit()
+
+    def queue_stats(self) -> dict:
+        """Return counts by status for the fetch queue."""
+        rows = self.conn.execute("""
+            SELECT status, COUNT(*) AS cnt
+            FROM fetch_queue
+            GROUP BY status
+        """).fetchall()
+        return {r["status"]: r["cnt"] for r in rows}
 
     # ── Ticker pipeline queries ────────────────────────────────────────
 

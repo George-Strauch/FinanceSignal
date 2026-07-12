@@ -199,3 +199,57 @@ async def get_process_logs(job_id: str):
     ]
 
     return {"job_id": job_id, "logs": recent_logs, "count": len(recent_logs)}
+
+
+@router.get("/{job_id}/fetch-queue")
+async def get_fetch_queue(
+    job_id: str,
+    past_limit: int = 50,
+    past_offset: int = 0,
+    ready_limit: int = 100,
+    db: RedditDatabase = Depends(get_db),
+):
+    """Fetch queue state for the reddit_scraper job.
+
+    Returns ready/in_progress rows (the queue) and past success/failed rows
+    (history, paginated via past_limit/past_offset), plus summary stats and
+    total counts for infinite scroll.
+    """
+    if job_id != "reddit_scraper":
+        raise HTTPException(status_code=404, detail="Fetch queue only for reddit_scraper")
+
+    ready = db.get_ready_queue(limit=ready_limit)
+    past = db.get_past_fetches(limit=past_limit, offset=past_offset)
+    stats = db.queue_stats()
+    past_total = db.count_past_fetches()
+    ready_total = db.count_ready_queue()
+
+    def _fmt_row(r):
+        return {
+            "id": r["id"],
+            "subreddit": r["subreddit"],
+            "url": r["url"],
+            "fetch_type": r["fetch_type"],
+            "page_num": r["page_num"],
+            "status": r["status"],
+            "enqueued_at": _ts(r.get("enqueued_at")),
+            "claimed_at": _ts(r.get("claimed_at")),
+            "fetch_started_at": _ts(r.get("fetch_started_at")),
+            "fetch_completed_at": _ts(r.get("fetch_completed_at")),
+            "posts_fetched": r.get("posts_fetched", 0),
+            "posts_new": r.get("posts_new", 0),
+            "next_after": r.get("next_after"),
+            "error": r.get("error"),
+            "log_id": r.get("log_id"),
+            "cycle_id": r.get("cycle_id"),
+        }
+
+    return {
+        "ready": [_fmt_row(r) for r in ready],
+        "past": [_fmt_row(r) for r in past],
+        "stats": stats,
+        "ready_count": len(ready),
+        "past_count": len(past),
+        "past_total": past_total,
+        "ready_total": ready_total,
+    }
