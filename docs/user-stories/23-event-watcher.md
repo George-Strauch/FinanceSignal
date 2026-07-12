@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add a new `watchlist_events` database table and a dedicated "Event Watcher" page in the sidebar. Events are forward-looking market signals — mergers, earnings, regulatory decisions, Fed announcements — that the LLM discovers during post analysis and manages via tool calls. The LLM can create, search, update, and resolve events during any analysis session. The UI surfaces active events with their related tickers, expected update timelines, and resolution status.
+Add a `watchlist_events` database table and an "Events" page in the sidebar. Events are forward-looking market signals — mergers, earnings, regulatory decisions, Fed announcements — that the LLM discovers during post analysis and manages via tool calls (create, update, resolve). Every event links back to the Reddit posts that sourced it. The UI surfaces active events with related tickers, expected update timelines, source posts, and resolution status, and gives the human curation controls (resolve/dismiss) to keep the list clean.
 
 ## Motivation
 
@@ -27,30 +27,73 @@ The quality bar is: **would a real trader adjust their position or watch list ba
 
 ---
 
+## Design Principles — Bloat Control
+
+The single biggest production risk is watchlist bloat: LLMs given tools tend to use them, and over weeks of analysis sessions the table fills with duplicates, near-duplicates, stale never-resolved events, and marginal noise. Every design decision below is filtered through this risk. The defenses, in order of importance:
+
+1. **Context injection over voluntary search.** The backend knows which ticker is being analyzed. Before streaming, it injects that ticker's existing events (active + recently closed) directly into the prompt, with their IDs. The LLM sees what already exists *before* deciding anything — duplicates are prevented by construction, not by hoping the model remembers to call `search_events`. It also lets the model call `update_event`/`resolve_event` with IDs directly, no search round-trip.
+2. **Hard server-side caps.** Max **5 `create_event` calls per analysis** and max **8 tool round-trips per session**, enforced in the backend. Excess calls return an error message to the LLM ("creation limit reached for this session"). Prompt instructions are a soft defense; caps are the hard one.
+3. **Dismissed events stay visible to the LLM.** Human curation (dismiss) doesn't delete — dismissed events remain in search results and context injection, marked "dismissed as noise — do not recreate." Deleting junk would just let the LLM recreate it next session.
+4. **Temporal awareness.** Analyses can run on historical dates (story 22). The prompt must state today's date and the date range of the posts being analyzed, with explicit rules: events that already concluded before today are created as `discovered_and_resolved` or not created at all; never create an "upcoming" event whose date is already past.
+5. **Human curation is first-class.** The UI makes resolve/dismiss one click. A watchlist the human can't cheaply prune will rot.
+
+---
+
 ## Database Schema
 
-### `watchlist_events` table
+### `watchlist_events`
 
 ```sql
 CREATE TABLE IF NOT EXISTS watchlist_events (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    summary             TEXT NOT NULL,              -- brief: "Cox-Charter merger pending antitrust review"
-    context             TEXT NOT NULL,              -- long-form detail: why this matters, what to watch for
-    related_tickers     TEXT DEFAULT '[]',          -- JSON array: ["COX", "CHTR"] — empty for macro events
+    summary             TEXT NOT NULL,          -- brief headline: "Cox-Charter merger pending antitrust review"
+    context             TEXT NOT NULL,          -- long-form: why it matters, what to watch for (append-only via LLM)
+    related_tickers     TEXT DEFAULT '[]',      -- JSON array: ["COX", "CHTR"] — empty for macro events
     status              TEXT NOT NULL DEFAULT 'active',
-                                                    -- 'active', 'resolved', 'discovered_and_resolved'
-    discovered_at       REAL NOT NULL,              -- auto-set on creation (UTC timestamp)
-    first_reported_at   REAL,                       -- when the event first became interesting (nullable)
-    expected_updates    TEXT DEFAULT '[]',          -- JSON array of {label, timestamp, type}
-    resolution_notes    TEXT,                       -- closing notes when status -> resolved
-    created_by_analysis INTEGER,                    -- FK to llm_analyses.id (nullable for manual creation)
-    updated_at          REAL NOT NULL,              -- last modification timestamp
-    edit_history        TEXT DEFAULT '[]'           -- JSON array of {timestamp, field, old_value, new_value}
+                                                -- 'active' | 'resolved' | 'discovered_and_resolved' | 'dismissed'
+    discovered_at       REAL NOT NULL,          -- auto-set on creation (UTC timestamp)
+    resolved_at         REAL,                   -- set when status leaves 'active'
+    expected_updates    TEXT DEFAULT '[]',      -- JSON array of {label, timestamp, type}
+    resolution_notes    TEXT,                   -- closing notes when resolved/dismissed
+    created_by_analysis INTEGER,                -- FK to llm_analyses.id
+    updated_at          REAL NOT NULL,
+    change_log          TEXT DEFAULT '[]'       -- JSON array of compact journal entries (see below)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_status ON watchlist_events(status);
-CREATE INDEX IF NOT EXISTS idx_events_tickers ON watchlist_events(related_tickers);
 ```
+
+Notes:
+- **No index on `related_tickers`** — a btree index on a JSON column is useless for containment queries. Per-ticker lookup uses `EXISTS (SELECT 1 FROM json_each(related_tickers) WHERE value = ?)`; at expected volume (hundreds of events, not millions) a scan is fine. If this ever becomes a bottleneck, promote to a junction table — do not pre-build it.
+- **No `first_reported_at`** — an LLM guess at "when this became notable" is noise dressed as data. The earliest linked source post's `created_utc` (see `event_sources` below) is the first-reported time: derived, accurate, free.
+- **`context` is append-only via LLM** — `update_event` can only append to context, never rewrite it, and can never touch `summary`. This prevents an LLM from destroying accumulated context. Full edits are manual-only (and rare).
+
+### `event_sources` — post associations
+
+Every event links to the Reddit posts/comments that evidence it. This answers the #1 question about any LLM-created event — *"is this real or did the model hallucinate it?"* — with one click through to the source.
+
+```sql
+CREATE TABLE IF NOT EXISTS event_sources (
+    event_id    INTEGER NOT NULL REFERENCES watchlist_events(id),
+    source_type TEXT NOT NULL,      -- 'post' | 'comment'
+    source_id   TEXT NOT NULL,      -- posts.id / comments.id
+    analysis_id INTEGER,            -- which analysis session added this link
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (event_id, source_type, source_id)
+);
+```
+
+Key property: **the backend validates cited source IDs against the staged post set of the current analysis.** The LLM can only cite posts it was actually shown; hallucinated IDs are rejected. `update_event` accumulates additional sources over time, so an event tracked across multiple sessions builds an evidence trail.
+
+### Event–event associations — rejected
+
+Considered and deliberately **not** included:
+- The feature it would enable ("related events" browsing) is speculative — no concrete workflow needs it.
+- Ticker overlap already clusters related events implicitly (two events sharing NVDA appear together under any NVDA filter).
+- LLMs over-link aggressively; a `link_events` tool would generate a noisy graph requiring its own curation — a new bloat surface to police.
+- The one legitimate case (duplicate merging) is better solved upstream: context injection prevents duplicates from being created, and manual dismiss handles leaks.
+
+Revisit only if a real workflow emerges that ticker filtering can't serve.
 
 ### `expected_updates` JSON structure
 
@@ -62,37 +105,64 @@ CREATE INDEX IF NOT EXISTS idx_events_tickers ON watchlist_events(related_ticker
 ]
 ```
 
-- `type: "resolution"` — this update is expected to resolve the event (earnings results, ruling, decision)
-- `type: "milestone"` — intermediate checkpoint (advisory panel hearing, shareholder vote date, comment period deadline)
-- `timestamp: null` — event is expected but date is unknown (TBD)
+- `type: "resolution"` — expected to resolve the event (earnings results, ruling, decision)
+- `type: "milestone"` — intermediate checkpoint (advisory panel, shareholder vote, comment deadline)
+- `timestamp: null` — expected but date unknown (TBD)
+
+LLM updates are add-only (a moved earnings date adds a new entry; it cannot delete the old one). The UI allows manual removal of stale entries.
 
 ### `status` values
 
 | Status | Meaning |
 |--------|---------|
-| `active` | Event is being monitored; awaiting updates or resolution |
-| `resolved` | Event has concluded; resolution_notes filled in |
-| `discovered_and_resolved` | LLM discovered the event and determined it was already resolved in the same query (e.g., "earnings already reported yesterday") — kept for audit but not shown in active list |
+| `active` | Being monitored; awaiting updates or resolution |
+| `resolved` | Concluded; `resolution_notes` filled in |
+| `discovered_and_resolved` | LLM discovered the event already concluded (common when analyzing historical dates) — kept for context, never shown in active list |
+| `dismissed` | Human judged it noise. Stays visible to LLM search/context as "do not recreate" |
 
-### `edit_history` JSON structure
+**Staleness (no background job):** an active event whose latest resolution-type `expected_updates` timestamp is >14 days past is flagged `stale: true` at query time and styled as overdue in the UI. Stale events also get a note in context injection ("this event appears overdue — resolve it if the posts indicate it concluded"). This is a query-time computation, not a stored field and not a cron job.
+
+### `change_log` JSON structure
+
+A compact action journal — **not** an old-value/new-value diff log (storing full copies of a long `context` field on every edit is self-inflicted bloat).
 
 ```json
 [
-  {"timestamp": 1780000000, "field": "status", "old_value": "active", "new_value": "resolved"},
-  {"timestamp": 1780000100, "field": "resolution_notes", "old_value": null, "new_value": "Earnings beat by 12%"}
+  {"ts": 1780000000, "source": "llm", "analysis_id": 42, "action": "created"},
+  {"ts": 1780050000, "source": "llm", "analysis_id": 57, "action": "context_appended", "detail": "Antitrust review extended to Q4"},
+  {"ts": 1780090000, "source": "manual", "action": "resolved", "detail": "Merger approved"}
 ]
 ```
 
-Every field change via tool call or manual edit appends to this array. This provides a full audit trail of how the event evolved.
+Actions: `created`, `context_appended`, `tickers_added`, `expected_update_added`, `resolved`, `dismissed`, `reactivated`. Since LLM context changes are append-only, the appended chunk *is* the delta — no old/new copies needed.
 
-### Rationale for consolidated design
+---
 
-The original spec had separate `updates`, `resolution_type`, and `expected_updates` fields. After review:
+## Context Injection
 
-- **`expected_updates`** absorbs both "scheduled milestones" and "expected resolution" — the `type` field distinguishes them. This is simpler than separate columns.
-- **`resolution_type`** is replaced by the `status` enum — `discovered_and_resolved` captures the "found and immediately closed" case without a separate type field.
-- **`updates`** (ad-hoc updates) is absorbed into `edit_history` — any non-scheduled update to the event is an edit, and the audit trail captures it naturally.
-- **`resolution_notes`** stays as a dedicated field because it's the most important piece of a resolved event and deserves first-class queryability.
+The core anti-bloat mechanism. Before the streaming request, the backend fetches events relevant to the analysis and injects a compact block into the prompt:
+
+**Selection** (capped at ~15 events, ticker-specific first, then macro by recency):
+1. Events where the analyzed ticker is in `related_tickers` — any status, closed ones only from the last 60 days
+2. Macro events (`related_tickers = []`) with status `active`
+
+**Injected format** (compact, one block in the user prompt):
+
+```
+EXISTING WATCHLIST EVENTS for NVDA (reference by ID for updates/resolution):
+- [#12 | active] NVDA earnings Aug 28 — options pricing 8% move. Next: Earnings report (resolution) 2026-08-28
+- [#8 | active | STALE — overdue, resolve if posts indicate it concluded] Blackwell supply constraints...
+- [#5 | resolved 2026-07-02] NVDA stock split — completed as scheduled
+- [#3 | dismissed — judged noise, do not recreate] Rumor of Apple partnership
+```
+
+Consequences:
+- Duplicate creation is prevented by construction — the model sees what exists before deciding
+- `update_event` / `resolve_event` reference IDs directly, no search round-trip (fewer turns, cheaper)
+- Resolution happens naturally: model reads posts saying "earnings happened," sees event #12 active, resolves it
+- Dismissed events actively suppress recreation
+
+`search_events` remains available but is demoted to a secondary path: cross-ticker and macro discovery (e.g., analyzing AMD, checking whether "AI chip export restrictions" already exists under NVDA).
 
 ---
 
@@ -100,134 +170,98 @@ The original spec had separate `updates`, `resolution_type`, and `expected_updat
 
 ### Model Selection
 
-Not all models support tool calling. The model dropdown in the LLM analysis modal must filter to tool-capable models when event tools are enabled.
+Not all models support tool calling. When "Enable Event Tools" is on, the model dropdown filters to tool-capable models. The `/api/analysis/models` endpoint gains a `supports_tools` flag per model (hardcoded list in `analysis.py`):
 
-**Models that support tool calling via OpenRouter:**
-
-| Model | Tool Support | Quality | Cost |
-|-------|-------------|---------|------|
-| Claude Sonnet 4 | Yes (native) | Excellent | Moderate |
-| Claude Opus 4 | Yes (native) | Excellent | High |
-| GPT-4o | Yes (native) | Very good | Moderate |
-| GPT-4o-mini | Yes (native) | Good for simple tasks | Low |
-| Gemini 2.5 Pro | Yes (native) | Very good | Moderate |
-
-Models without tool support (e.g., some smaller/open models on OpenRouter) should be hidden or disabled with a tooltip when "Enable Event Tools" is toggled on.
-
-The recommended default for event extraction is **Claude Sonnet 4** — it has the best combination of tool-calling reliability, instruction following for quality filtering, and cost.
+| Model | Tools | Notes |
+|-------|-------|-------|
+| `anthropic/claude-sonnet-4` | Yes | **Recommended default** — best mix of tool reliability, instruction following, cost |
+| `anthropic/claude-opus-4` | Yes | Highest quality, expensive |
+| `openai/gpt-4o` | Yes | |
+| `openai/gpt-4o-mini` | Yes | Cheap; weaker quality-bar adherence — expect more junk events |
+| `google/gemini-2.5-pro` | Yes | |
 
 ### Tool Definitions
 
-The LLM receives these tools as OpenAI-compatible function definitions in the API request:
+Four tools, OpenAI-compatible function definitions:
 
 #### 1. `search_events`
-
-Search existing events by text similarity (BM25) or ticker.
 
 ```json
 {
   "name": "search_events",
-  "description": "Search existing watchlist events to avoid duplicates before creating new ones. Always search before creating.",
+  "description": "Search watchlist events beyond those already shown in your context — e.g. events filed under other tickers or macro events. Events in your provided context do NOT need to be searched for.",
   "parameters": {
     "type": "object",
     "properties": {
-      "query": {
-        "type": "string",
-        "description": "Natural language search query: 'cox charter merger', 'fed rate cut', 'NVDA earnings'"
-      },
-      "ticker": {
-        "type": "string",
-        "description": "Optional: filter to events related to a specific ticker"
-      },
-      "include_resolved": {
-        "type": "boolean",
-        "description": "Whether to include resolved events in results. Default false.",
-        "default": false
-      }
+      "query": {"type": "string", "description": "Natural language query: 'chip export restrictions', 'fed rate cut'"},
+      "ticker": {"type": "string", "description": "Optional ticker filter"},
+      "include_closed": {"type": "boolean", "description": "Include resolved/dismissed events. Default false.", "default": false}
     },
     "required": ["query"]
   }
 }
 ```
 
-**Backend implementation**: BM25 full-text search over `summary` + `context` fields. SQLite FTS5 is the simplest option — create a virtual table `watchlist_events_fts` synced with triggers. Alternatively, implement BM25 in Python with `rank_bm25` over the in-memory result set (simpler, fine for <10K events). Start with the Python approach; migrate to FTS5 if volume warrants.
+**Backend**: Python `rank_bm25` over `summary` + `context` of the candidate set, top 5 results. At this scale (hundreds of events) in-memory ranking is fine; FTS5 only if volume ever demands it.
 
 #### 2. `create_event`
 
 ```json
 {
   "name": "create_event",
-  "description": "Create a new market event to watch. Use ONLY for events with real market impact — mergers, earnings, regulatory decisions, Fed announcements, product launches, etc. Do NOT use for individual price targets, TA patterns, or generic sentiment.",
+  "description": "Create a new market event to watch. ONLY for events with real market impact — mergers, earnings, regulatory decisions, macro announcements. NOT for individual price targets, TA patterns, or sentiment. Check your provided event context first — do not recreate existing or dismissed events. Limit: 5 per session.",
   "parameters": {
     "type": "object",
     "properties": {
-      "summary": {
-        "type": "string",
-        "description": "Brief headline: 'Cox-Charter merger pending antitrust review'"
-      },
-      "context": {
-        "type": "string",
-        "description": "Detailed explanation: why this matters, what signal to watch for, potential market impact"
-      },
-      "related_tickers": {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": "Tickers related to this event. Empty for macro events (Fed, CPI, etc.)"
-      },
-      "first_reported_at": {
-        "type": "string",
-        "description": "ISO 8601 timestamp when this event first became notable, if known. null if unknown.",
-        "format": "date-time"
-      },
+      "summary": {"type": "string", "description": "Brief headline: 'Cox-Charter merger pending antitrust review'"},
+      "context": {"type": "string", "description": "Why this matters, what signal to watch for, potential market impact"},
+      "related_tickers": {"type": "array", "items": {"type": "string"}, "description": "Related tickers. Empty for macro events."},
+      "source_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs of the staged posts/comments that evidence this event. Cite at least one."},
       "expected_updates": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
-            "label": {"type": "string", "description": "What the update is: 'Earnings report', 'FDA decision'"},
-            "timestamp": {"type": "string", "description": "ISO 8601 timestamp, or null if date is TBD", "format": "date-time"},
+            "label": {"type": "string"},
+            "timestamp": {"type": "string", "format": "date-time", "description": "ISO 8601, or omit if TBD"},
             "type": {"type": "string", "enum": ["resolution", "milestone"]}
           },
           "required": ["label", "type"]
-        },
-        "description": "Scheduled updates we expect. Include resolution-type events if there's a known end date."
-      }
+        }
+      },
+      "already_resolved": {"type": "boolean", "description": "True if this event already concluded (creates it as discovered_and_resolved). Requires resolution_notes.", "default": false},
+      "resolution_notes": {"type": "string", "description": "Required when already_resolved is true"}
     },
-    "required": ["summary", "context"]
+    "required": ["summary", "context", "source_ids"]
   }
 }
 ```
+
+Backend enforcement on create:
+- **Session cap**: max 5 creates; excess returns `{"error": "creation limit reached for this session"}`
+- **Source validation**: every `source_ids` entry must exist in the current staged set; invalid IDs are dropped, and if none remain the create is rejected with an explanatory error
+- `already_resolved: true` sets status `discovered_and_resolved` + `resolved_at` immediately
 
 #### 3. `update_event`
 
 ```json
 {
   "name": "update_event",
-  "description": "Update an existing event with new information. Use when you find new details about an already-tracked event.",
+  "description": "Add new information to an existing event (referenced by ID from your context or search results). Context is append-only — do not repeat existing info.",
   "parameters": {
     "type": "object",
     "properties": {
-      "event_id": {
-        "type": "integer",
-        "description": "ID of the event to update"
-      },
-      "context_addition": {
-        "type": "string",
-        "description": "New context to append to the existing context. Do not repeat existing info."
-      },
-      "add_related_tickers": {
-        "type": "array",
-        "items": {"type": "string"},
-        "description": "Additional tickers to associate with this event"
-      },
+      "event_id": {"type": "integer"},
+      "context_addition": {"type": "string", "description": "New information to append"},
+      "add_related_tickers": {"type": "array", "items": {"type": "string"}},
+      "source_ids": {"type": "array", "items": {"type": "string"}, "description": "Staged post/comment IDs evidencing this update"},
       "add_expected_update": {
         "type": "object",
         "properties": {
           "label": {"type": "string"},
           "timestamp": {"type": "string", "format": "date-time"},
           "type": {"type": "string", "enum": ["resolution", "milestone"]}
-        },
-        "description": "A new scheduled update discovered for this event"
+        }
       }
     },
     "required": ["event_id"]
@@ -235,265 +269,168 @@ Search existing events by text similarity (BM25) or ticker.
 }
 ```
 
+Cannot modify `summary`, cannot rewrite `context`, cannot remove anything. Rejected with an error if the target event is `dismissed`.
+
 #### 4. `resolve_event`
 
 ```json
 {
   "name": "resolve_event",
-  "description": "Mark an event as resolved. Use when the event has concluded (earnings reported, merger approved/rejected, decision made).",
+  "description": "Mark an active event as resolved when the posts indicate it has concluded (earnings reported, merger decided, ruling issued).",
   "parameters": {
     "type": "object",
     "properties": {
-      "event_id": {
-        "type": "integer",
-        "description": "ID of the event to resolve"
-      },
-      "resolution_notes": {
-        "type": "string",
-        "description": "How was it resolved? What was the outcome? 'Earnings beat by 12%, stock up 8%'"
-      },
-      "discovered_and_resolved": {
-        "type": "boolean",
-        "description": "Set to true if the event was discovered and already resolved in this same analysis. Default false.",
-        "default": false
-      }
+      "event_id": {"type": "integer"},
+      "resolution_notes": {"type": "string", "description": "Outcome: 'Earnings beat by 12%, stock up 8%'"},
+      "source_ids": {"type": "array", "items": {"type": "string"}, "description": "Staged post/comment IDs evidencing the resolution"}
     },
     "required": ["event_id", "resolution_notes"]
   }
 }
 ```
 
+### System Prompt Additions (when event tools enabled)
+
+Appended to the analysis system prompt:
+
+> Today's date is {today}. The posts you are analyzing span {date_from} to {date_to}.
+>
+> You manage a watchlist of market events. Existing events relevant to this ticker are listed in your context — reference them by ID. Rules:
+> - Only create events with real market impact: mergers, earnings, regulatory decisions, macro announcements. Never create events for individual opinions, price targets, or TA patterns. When in doubt, don't create.
+> - Do not recreate events shown in your context, including dismissed ones.
+> - Cite the staged posts that evidence each event via source_ids.
+> - If an event described in the posts has already concluded relative to today's date, create it with already_resolved=true or skip it — never create an "upcoming" event whose date is already past.
+> - If posts indicate an active event from your context has concluded, resolve it.
+> - Use search_events only to check for events that might exist under other tickers or as macro events.
+
 ### Tool Call Flow
 
-1. User stages posts and runs analysis with "Enable Event Tools" toggled on
-2. System prompt includes event-tool instructions:
-   > "You have tools to manage a watchlist of market events. Before creating a new event, search for existing ones to avoid duplicates. Only create events for signals with real market impact — mergers, earnings, regulatory decisions, macro events. Do not create events for individual opinions, price targets, or TA patterns. If you discover an event that has already concluded, create it and immediately resolve it with `discovered_and_resolved: true`."
-3. LLM streams its analysis text AND makes tool calls during the response
-4. Backend processes tool calls against the DB, returns results to the LLM
-5. LLM continues generating text with the tool results
-6. After the stream completes, any events created/updated during the session are shown in the modal
-
-### OpenRouter Tool Calling
-
-OpenRouter supports OpenAI-compatible tool calling. The request format:
-
-```json
-{
-  "model": "anthropic/claude-sonnet-4",
-  "messages": [...],
-  "tools": [...],
-  "tool_choice": "auto",
-  "stream": true
-}
-```
-
-Tool call chunks arrive in the SSE stream as:
-
-```json
-{
-  "choices": [{
-    "delta": {
-      "tool_calls": [{
-        "index": 0,
-        "id": "call_abc123",
-        "function": {
-          "name": "search_events",
-          "arguments": "{\"query\": \"cox charter merger\"}"
-        }
-      }]
-    }
-  }]
-}
-```
-
-The backend must:
-1. Accumulate tool call arguments across chunks (they arrive in pieces)
-2. When a tool call is complete (finish_reason: "tool_calls"), execute it against the DB
-3. Send the tool result back to the LLM as a new message with role: "tool"
-4. Continue streaming the LLM's response
-
-This requires a multi-turn conversation within a single streaming session. The backend maintains a running message list, appends the assistant's tool calls, executes them, appends tool results, and re-requests completion.
+1. User stages posts and runs analysis with "Enable Event Tools" on
+2. Backend builds the prompt: staged posts (now including their IDs) + injected event context + system prompt additions
+3. Request sent with `tools`, `tool_choice: "auto"`, `stream: true`
+4. LLM streams analysis text and makes tool calls; backend executes them and feeds results back (multi-turn, see Technical Notes)
+5. Hard limits: 5 creates, 8 tool round-trips per session
+6. On completion, the modal shows a summary of events created/updated/resolved
 
 ---
 
 ## Frontend
 
-### Event Watcher Page (`/events`)
+### Events Page (`/events`)
 
-New sidebar entry: **Events** (icon: `FiWatch` or `FiBell`), positioned after Historical.
+New sidebar entry: **Events** (icon: `FiBell`), after Historical.
 
-#### Layout
+**Filter bar**: status (Active / Resolved / Dismissed / All — default Active), ticker text filter, sort by discovered_at (default) or next expected update.
 
-**Filter bar** (top):
-- Status filter: Active / Resolved / All (default: Active)
-- Ticker filter: text input (optional)
-- Sort: by discovered_at (default), first_reported_at, or next expected update
+**Event cards**, each showing:
+- **Summary** (bold) + **status badge** (green active, gray resolved, blue discovered_and_resolved, red-muted dismissed); active-but-stale events get an "overdue" warning style
+- **Related tickers**: clickable chips → ticker detail
+- **Context**: first 2 lines, click to expand (markdown rendered)
+- **Expected updates** timeline: next upcoming highlighted with countdown ("in 3 days"); past-due entries in warning style
+- **Source posts**: count badge; expanded view lists linked posts/comments (title, subreddit, score, reddit link)
+- **Discovered** relative time; first-reported derived from earliest source post
+- **Resolution notes** (closed events only)
+- **Curation buttons**: Resolve (opens notes input), Dismiss, Reactivate (for closed) — one click each; this is how the human keeps the list clean
+- **Change log**: collapsible timestamped journal
+- **Link to originating analysis** when `created_by_analysis` is set
 
-**Event cards** (scrollable list):
-
-Each event card shows:
-- **Summary** (bold, large text)
-- **Status badge**: green (active), gray (resolved), blue (discovered_and_resolved)
-- **Related tickers**: clickable chips that navigate to ticker detail
-- **Context** (collapsible — first 2 lines visible, click to expand full text)
-- **Expected updates** timeline: chronological list of upcoming milestones with dates (or "TBD")
-  - Next upcoming update highlighted with a countdown ("in 3 days")
-  - Past expected updates with no resolution shown with a warning style
-- **Discovered**: relative time ("5 days ago")
-- **First reported**: relative time if set
-- **Resolution notes**: shown only for resolved events, in a distinct style
-- **Edit history**: collapsible, shows timestamped changes
-
-#### Event Detail (expandable or separate route)
-
-Clicking an event expands to show:
-- Full context text (markdown rendered)
-- Complete edit history timeline
-- All expected updates (past and future)
-- Link to the originating LLM analysis (if created_by_analysis is set)
+No manual event creation form. Curation (resolve/dismiss) is essential; creation is not — events come from the LLM. If a manual need emerges later, add it then.
 
 ### LLM Analysis Modal Changes
 
-- Add **"Enable Event Tools"** toggle (checkbox) in the config section
-- When enabled:
-  - Model dropdown filters to tool-capable models only
-  - System prompt appends event-tool instructions
-  - Tool definitions are sent with the API request
-- After analysis completes with event tools:
-  - Show a summary panel: "Created 2 new events, updated 1, resolved 0"
-  - List the affected events with links to the Event Watcher page
+- **"Enable Event Tools"** toggle in the config section
+- When on: model dropdown filters to tool-capable models; tool definitions + prompt additions sent
+- During streaming: tool calls rendered inline as compact activity lines ("Created event: Cox-Charter merger...")
+- After completion: summary panel ("Created 2, updated 1, resolved 0") with links to the Events page
 
 ---
 
 ## API Endpoints
 
-### `GET /api/events`
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/events` | Paginated list; params: `status`, `ticker`, `sort`, `limit`, `offset`. Computes `stale` flag |
+| `GET /api/events/{id}` | Full detail: change log, source posts (joined with post/comment data) |
+| `POST /api/events/{id}/resolve` | Body `{resolution_notes}` — manual resolve |
+| `POST /api/events/{id}/dismiss` | Body `{notes}` — manual dismiss |
+| `POST /api/events/{id}/reactivate` | Reopen a closed event |
+| `DELETE /api/events/{id}/expected-updates/{index}` | Manual removal of a stale expected update |
+| `GET /api/events/search?q=&ticker=` | BM25 search (shared by LLM tool and UI) |
 
-Query params: `status`, `ticker`, `sort`, `limit`, `offset`
-
-Returns paginated list of events.
-
-### `GET /api/events/{id}`
-
-Returns full event detail including edit history.
-
-### `POST /api/events`
-
-Manual event creation (for the UI — not LLM tool calls).
-
-### `PUT /api/events/{id}`
-
-Manual event update (for the UI).
-
-### `POST /api/events/{id}/resolve`
-
-Resolve an event from the UI. Body: `{resolution_notes, discovered_and_resolved}`.
-
-### `GET /api/events/search?q=...`
-
-BM25 search endpoint (used by the LLM tool call and the UI search).
+No `POST /api/events` (no manual creation) and no free-form `PUT` (LLM edits are structured tool calls; manual curation is the specific actions above).
 
 ---
 
 ## Acceptance Criteria
 
 ### Database
-- [ ] `watchlist_events` table created with all fields
-- [ ] Edit history appended on every field change
-- [ ] `expected_updates` and `edit_history` stored as valid JSON
+- [ ] `watchlist_events` and `event_sources` tables created
+- [ ] Change log appended on every mutation (compact journal entries, no full-value diffs)
+- [ ] `expected_updates` / `change_log` stored as valid JSON
+
+### Bloat Control
+- [ ] Ticker-relevant events injected into the prompt with IDs (capped at ~15)
+- [ ] Create cap (5/session) and round-trip cap (8/session) enforced server-side
+- [ ] `source_ids` validated against the staged set; creates with no valid sources rejected
+- [ ] Dismissed events appear in injection/search as "do not recreate"
+- [ ] Prompt includes today's date + analysis date range; past events handled via `already_resolved`
+- [ ] Stale (overdue) active events flagged at query time and noted in injection
 
 ### LLM Tool Integration
-- [ ] "Enable Event Tools" toggle in analysis modal
-- [ ] Model dropdown filters to tool-capable models when toggle is on
-- [ ] Tool definitions sent to OpenRouter when enabled
-- [ ] `search_events` tool returns BM25-ranked results
-- [ ] `create_event` tool inserts into DB and returns the new event ID
-- [ ] `update_event` tool modifies fields and appends to edit history
-- [ ] `resolve_event` tool sets status and resolution_notes
-- [ ] Tool call results fed back to LLM for continued generation
-- [ ] Post-analysis summary shows events created/updated/resolved
+- [ ] "Enable Event Tools" toggle; model dropdown filters to tool-capable models
+- [ ] All four tools execute against the DB with results fed back to the LLM
+- [ ] `update_event` cannot modify summary, rewrite context, or touch dismissed events
+- [ ] Tool activity rendered inline during streaming; post-analysis summary panel shown
 
-### Event Watcher Page
-- [ ] New "Events" sidebar entry, route `/events` loads
-- [ ] Event cards display summary, status, tickers, context, expected updates
-- [ ] Status filter (active/resolved/all) works
-- [ ] Ticker filter works
-- [ ] Clicking a ticker chip navigates to ticker detail
-- [ ] Clicking an event expands to show full detail + edit history
-- [ ] Expected updates show countdown for upcoming dates
-- [ ] Resolved events show resolution notes
-
-### Quality
-- [ ] System prompt clearly instructs LLM to only create events with real market impact
-- [ ] LLM searches for existing events before creating new ones
-- [ ] Duplicate events are not created (search finds them first)
+### Events Page
+- [ ] Route `/events` with sidebar entry
+- [ ] Cards show summary, status, tickers, context, expected updates with countdowns, source posts
+- [ ] Status + ticker filters work; ticker chips navigate to ticker detail
+- [ ] Resolve / Dismiss / Reactivate work in one or two clicks
+- [ ] Source posts expandable with reddit links
+- [ ] Change log collapsible; originating analysis linked
 
 ---
 
 ## Technical Notes
 
-### BM25 Search
+### Staged posts need IDs in the prompt
 
-For the initial implementation, use Python `rank_bm25` library over the in-memory result set:
-1. Fetch all active events (or all if `include_resolved=true`)
-2. Tokenize `summary` + `context` for each
-3. Rank by BM25 score against the query
-4. Return top 5
-
-If the event count grows beyond ~10K, migrate to SQLite FTS5 with triggers for better performance.
+`stream_analysis` currently builds `prompt_items` without the `id` field (app/routers/analysis.py:230). When event tools are enabled, each item must include its `id` so the LLM can cite `source_ids`. The backend keeps a `{id -> (type, id)}` map of the staged set for validation.
 
 ### OpenRouter Tool Calling with Streaming
 
-This is the most complex part. The flow:
+The most complex piece. Multi-turn conversation within one SSE session:
 
-1. Send initial request with `stream: true` and `tools: [...]`
-2. Accumulate SSE chunks — separate content deltas from tool_call deltas
-3. When `finish_reason: "tool_calls"` arrives:
-   - Parse accumulated tool call arguments
-   - Execute each tool call against the DB
-   - Append the assistant message (with tool calls) to the conversation
-   - Append tool result messages (role: "tool", tool_call_id: matching)
-   - Send a new streaming request with the full conversation
-4. Repeat until `finish_reason: "stop"` (no more tool calls)
-5. Stream all content deltas to the frontend throughout
-6. Save the final response + any tool call metadata to the DB
+1. Send request with `stream: true`, `tools: [...]`
+2. Accumulate chunks — content deltas stream to the frontend; tool-call deltas accumulate (arguments arrive fragmented across chunks, keyed by index)
+3. On `finish_reason: "tool_calls"`: parse arguments, execute against DB, append assistant message (with tool_calls) + tool result messages (`role: "tool"`, matching `tool_call_id`) to the conversation, send a new streaming request
+4. Repeat until `finish_reason: "stop"` or the 8-round-trip cap
+5. Emit tool activity events to the frontend as they execute (`{"tool": "create_event", "result": {...}}` SSE lines)
+6. Save final response + tool-call metadata to `llm_analyses`
 
-This requires httpx async streaming with manual SSE parsing and multi-turn conversation management. The `analysis.py` router's `stream_analysis` endpoint will need significant expansion.
+### BM25 Search
 
-### Model Filtering
-
-The `/api/analysis/models` endpoint should return a `supports_tools: true/false` flag per model. The frontend uses this to filter the dropdown when event tools are enabled.
-
-Known tool-capable models on OpenRouter:
-- `anthropic/claude-sonnet-4`
-- `anthropic/claude-opus-4`
-- `openai/gpt-4o`
-- `openai/gpt-4o-mini`
-- `google/gemini-2.5-pro`
-
-This list should be configurable (hardcoded in `analysis.py` initially, DB-driven later if needed).
-
-### Manual vs LLM Creation
-
-Events can be created two ways:
-1. **LLM tool call** — during analysis, the LLM calls `create_event`
-2. **Manual UI** — user clicks "Add Event" on the Event Watcher page and fills in a form
-
-Both go through the same DB layer. Manual creation sets `created_by_analysis = null`. The UI form should have the same fields as the tool call parameters.
+Python `rank_bm25` over `summary` + `context` of candidates, top 5. No FTS5 unless event count grows far beyond expectations (it shouldn't — that would itself indicate a bloat failure).
 
 ### Phasing
 
-Suggested implementation order:
-1. **DB schema + manual CRUD endpoints** — table, API, basic Event Watcher page with manual event creation
-2. **Event Watcher UI** — full page with filters, cards, detail expansion
-3. **Tool call infrastructure** — OpenRouter multi-turn streaming with tool execution
-4. **LLM integration** — system prompt, tool definitions, post-analysis summary panel
+1. **DB + read API + Events page (read-only + curation)** — tables, list/detail/resolve/dismiss endpoints, page with cards and filters
+2. **Tool infrastructure** — multi-turn streaming with tool execution, caps, source validation
+3. **LLM integration** — context injection, prompt additions, modal toggle, tool activity display, summary panel
+
+Phase 1 has no LLM dependency and can be verified with hand-inserted rows.
 
 ---
 
-## Open Questions
+## Rejected Features (with reasons — do not silently resurrect)
 
-- Should events have a "confidence" or "source quality" field? (e.g., an event extracted from a well-sourced DD post vs. a random comment)
-- Should resolved events auto-delete after N days, or persist forever for audit?
-- Should the Event Watcher page show a calendar view of upcoming expected updates, or is the list view sufficient?
-- Should we support event categories (earnings, M&A, regulatory, macro, product) as a tag field?
+- **Event–event associations** — speculative browsing feature; ticker overlap already clusters; LLM over-linking would create a noisy graph needing its own curation. See schema section.
+- **Manual event creation form** — events come from the LLM; human role is curation. A creation form is UI surface without a workflow behind it.
+- **Confidence/source-quality field** — an LLM-emitted confidence number is noise dressed as data. The quality bar lives in the prompt; the human dismiss button is the real filter. Source post links let the human judge quality directly.
+- **Event categories/tags** — at expected volume (dozens of active events) ticker chips + text search suffice. Categories add a taxonomy to maintain and another field for the LLM to get wrong.
+- **Calendar view of expected updates** — list with countdowns covers the need. Revisit only if the active list grows large enough that a list is unmanageable (which would itself be a bloat failure to fix first).
+- **Auto-deleting resolved events** — volume is tiny; resolved events are useful context injection material ("earnings happened, beat by 12%") and audit history. Keep forever.
+- **`first_reported_at` field** — replaced by derived min(created_utc) of linked source posts; an LLM-guessed timestamp is strictly worse.
+- **Full old/new-value edit history** — replaced by the compact `change_log` journal; storing copies of long text fields on every edit is self-inflicted bloat.
+- **Background staleness job** — staleness is a query-time flag, not a cron job. No new processes.
