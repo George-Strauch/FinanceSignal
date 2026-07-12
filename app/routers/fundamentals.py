@@ -102,12 +102,16 @@ def _format_fundamentals(row: dict) -> dict:
 
         # Descriptive
         "name": row.get("name"),
+        "long_business_summary": row.get("long_business_summary"),
         "sector": row.get("sector"),
         "industry": row.get("industry"),
         "exchange": row.get("exchange"),
         "currency": row.get("currency"),
         "quote_type": row.get("quote_type"),
     }
+
+
+DESCRIPTION_STALE_THRESHOLD = 30 * 24 * 3600  # 30 days
 
 
 @router.get("/{ticker}")

@@ -655,6 +655,12 @@ export default function TickerDetail() {
 
       {error && <div className="td-error">Failed to load: {error}</div>}
 
+      {fundamentals?.long_business_summary && (
+        <div className="td-description">
+          {fundamentals.long_business_summary}
+        </div>
+      )}
+
       {dateParam && (
         <div className="td-date-banner">
           Historical view: {new Date(dateParam + 'T00:00:00').toLocaleDateString('en-US', {

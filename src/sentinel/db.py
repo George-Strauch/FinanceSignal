@@ -496,6 +496,8 @@ class RedditDatabase:
             "ALTER TABLE strategies ADD COLUMN live_trading INTEGER DEFAULT 0",
             "ALTER TABLE strategies ADD COLUMN last_evaluated_at REAL DEFAULT NULL",
             "ALTER TABLE llm_analyses ADD COLUMN staged_posts TEXT",
+            "ALTER TABLE ticker_fundamentals ADD COLUMN long_business_summary TEXT",
+            "ALTER TABLE ticker_fundamentals_latest ADD COLUMN long_business_summary TEXT",
         ]:
             try:
                 self.conn.execute(col_sql)
@@ -839,7 +841,7 @@ class RedditDatabase:
         "dividend_yield", "dividend_rate", "payout_ratio", "ex_dividend_date",
         "fifty_two_week_high", "fifty_two_week_low", "fifty_day_avg", "two_hundred_day_avg", "beta",
         "shares_outstanding", "float_shares", "short_ratio", "short_pct_of_float",
-        "name", "sector", "industry", "exchange", "currency", "quote_type",
+        "name", "long_business_summary", "sector", "industry", "exchange", "currency", "quote_type",
         "fetch_success", "fetch_error",
     ]
 

@@ -98,6 +98,7 @@ def market_info(ticker: str):
     return {
         "ticker": ticker.upper(),
         "name": info.get("shortName") or info.get("longName"),
+        "long_business_summary": info.get("longBusinessSummary"),
         "market_cap": market_cap,
         "market_cap_fmt": _fmt_large(market_cap),
         "current_price": current,

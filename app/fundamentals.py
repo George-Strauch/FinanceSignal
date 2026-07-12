@@ -95,6 +95,7 @@ INFO_KEY_MAP = {
     "shortPercentOfFloat": "short_pct_of_float",
     "shortName": "name",
     "longName": "name",
+    "longBusinessSummary": "long_business_summary",
     "sector": "sector",
     "industry": "industry",
     "exchange": "exchange",
