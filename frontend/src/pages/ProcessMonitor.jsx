@@ -102,6 +102,7 @@ export default function ProcessMonitor() {
   const [tab, setTab] = useState('processes')
   const [queuesData, setQueuesData] = useState(null)
   const [queueFilter, setQueueFilter] = useState({ queue: null, phase: null, outcome: null })
+  const [retrying, setRetrying] = useState(false)
   const logRef = useRef(null)
   const prevSelectedRef = useRef(null)
   const [now, setNow] = useState(Date.now())
@@ -311,6 +312,22 @@ export default function ProcessMonitor() {
     const id = setInterval(fetchQueues, 5000)
     return () => clearInterval(id)
   }, [tab, fetchQueues])
+
+  const retryFailed = useCallback(async () => {
+    setRetrying(true)
+    try {
+      const body = queueFilter.queue ? { queue: queueFilter.queue } : {}
+      const res = await post('/processes/queues/retry', body)
+      const total = res?.total ?? 0
+      if (total > 0) {
+        await fetchQueues()
+      }
+    } catch (e) {
+      console.error('Retry failed:', e)
+    } finally {
+      setRetrying(false)
+    }
+  }, [queueFilter.queue, fetchQueues])
 
   // Initialize param values and reset edit mode when selecting a job
   useEffect(() => {
@@ -1403,6 +1420,12 @@ export default function ProcessMonitor() {
               ))}
             </div>
             <span className="queue-total">Showing {items.length} of {total.toLocaleString()}</span>
+            <button
+              className="queue-retry-btn"
+              onClick={retryFailed}
+              disabled={retrying}
+              title="Move failed items back to queued for reprocessing"
+            >{retrying ? 'Retrying…' : '↻ Retry Failed'}</button>
           </div>
         </div>
 

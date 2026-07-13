@@ -24,6 +24,10 @@ class UpdateJobConfigRequest(BaseModel):
     on_failure: str | None = None
     schedule: dict | None = None
 
+
+class RetryFailedRequest(BaseModel):
+    queue: str | None = None  # omit to retry failed rows across all queues
+
 router = APIRouter(prefix="/api/processes")
 
 
@@ -629,3 +633,28 @@ async def get_unified_queues(
         "queues": selected,
         "stats": stats,
     }
+
+
+@router.post("/queues/retry")
+async def retry_failed_queue(body: RetryFailedRequest, db: RedditDatabase = Depends(get_db)):
+    """Move failed queue rows back to ready/queued so they get reprocessed.
+
+    Pass `queue` (one of fetch|ner|relevance|yfinance|canonicalization) to
+    retry one queue, or omit to retry failed rows across all queues.
+    """
+    if body.queue:
+        if body.queue not in QUEUE_TYPES:
+            raise HTTPException(status_code=400,
+                                detail=f"Unknown queue: {body.queue}. Valid: {QUEUE_TYPES}")
+        targets = [body.queue]
+    else:
+        targets = QUEUE_TYPES
+
+    results = {}
+    total = 0
+    for q in targets:
+        count = db.retry_failed_queue(q)
+        results[q] = count
+        total += count
+
+    return {"status": "ok", "retried": results, "total": total}

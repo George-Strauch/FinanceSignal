@@ -36,6 +36,14 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5.0
 
 
+class InsufficientCreditsError(RuntimeError):
+    """Raised when the OpenRouter API key is out of credits (HTTP 402).
+
+    Non-retryable — callers should stop the running job and surface the error
+    rather than hammering the API.
+    """
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -89,6 +97,15 @@ def _make_request(messages: list[dict], tools: list[dict] | None,
                 time.sleep(retry_after)
                 last_error = f"429 rate limit (attempt {attempt + 1})"
                 continue
+            if response.status_code == 402:
+                # Out of credits — non-retryable. Surface a clear message so
+                # callers can auto-pause instead of burning through the retry loop.
+                msg = response.text[:500]
+                logger.error("OpenRouter insufficient credits (402): %s", msg)
+                raise InsufficientCreditsError(
+                    f"OpenRouter returned 402 Payment Required — the API key is out "
+                    f"of credits. Pausing to avoid further failed requests. ({msg})"
+                )
             if response.status_code >= 500:
                 logger.warning("OpenRouter %d, retrying", response.status_code)
                 time.sleep(RETRY_DELAY * (attempt + 1))
@@ -146,6 +163,9 @@ def run_tool_session(
 
         try:
             response_json = _make_request(messages, tools, model)
+        except InsufficientCreditsError:
+            # Propagate — callers (workers) must auto-pause on this.
+            raise
         except Exception as e:
             result.error = str(e)
             if trace_db and trace_session_id:

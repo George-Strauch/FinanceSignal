@@ -19,6 +19,7 @@ canonicalization LLM (deepseek/deepseek-v4-flash) with tool calling.
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -26,11 +27,13 @@ from dataclasses import dataclass, field
 from sentinel.db import RedditDatabase
 from sentinel.llm_trace import LLMTraceDB
 from sentinel.canonicalize import canonicalize_entity
+from sentinel.llm_client import InsufficientCreditsError
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 25
 DEFAULT_SAMPLE_SIZE = 50
+ENQUEUE_BATCH_SIZE = 500
 
 
 @dataclass
@@ -82,9 +85,11 @@ async def run_entity_mass_correct(state: MassCorrectState):
 def _run_mass_correct(state: MassCorrectState, sample: int = 0, dry_run: bool = False):
     """Process unlabeled entity groups with the LLM canonicalization pipeline.
 
-    Enqueues the sampled groups into canonicalization_queue, then claims and
-    processes each row — this makes every entity visible in the Process
-    Monitor's Queues tab (ready → processing → done/failed).
+    Enqueueing and processing run concurrently: a background thread enqueues
+    entity groups into canonicalization_queue in large batches, while the
+    main thread claims and processes rows as they become available. This
+    avoids the long "enqueue everything first" delay before the first LLM
+    call fires.
     """
     initiated_by = "sample" if sample else ("manual_mass_correct" if dry_run else "manual_mass_correct")
 
@@ -95,28 +100,73 @@ def _run_mass_correct(state: MassCorrectState, sample: int = 0, dry_run: bool = 
 
         logger.info("Found %d unlabeled entity groups, processing %d", total_unlabeled, state.total_to_process)
 
-        # Enqueue the sampled groups into canonicalization_queue
-        enqueued = 0
-        offset = 0
-        while enqueued < state.total_to_process:
-            batch_size = min(DEFAULT_BATCH_SIZE, state.total_to_process - enqueued)
-            groups = db.get_unlabeled_entity_groups(limit=batch_size, offset=offset)
-            if not groups:
-                break
-            for g in groups:
-                if db.enqueue_canonicalization(g["entity_text"], g["entity_label"]):
-                    enqueued += 1
-                offset += 1
-                if enqueued >= state.total_to_process:
-                    break
-        logger.info("Enqueued %d entities into canonicalization_queue", enqueued)
+        # ── Enqueue thread ────────────────────────────────────────────
+        # Runs in the background, enqueuing batches of entities. The
+        # processor thread starts claiming rows immediately — no waiting
+        # for all enqueues to finish.
+        enqueue_state = {"enqueued": 0, "done": False, "error": None}
+        enqueue_lock = threading.Lock()
 
-        # Drain the queue
+        def _enqueue_worker():
+            try:
+                with RedditDatabase() as edb:
+                    enqueued = 0
+                    offset = 0
+                    while not state._stop_event.is_set() and enqueued < state.total_to_process:
+                        batch_size = min(ENQUEUE_BATCH_SIZE, state.total_to_process - enqueued)
+                        groups = edb.get_unlabeled_entity_groups(limit=batch_size, offset=offset)
+                        if not groups:
+                            break
+                        inserted = edb.enqueue_canonicalization_batch(groups)
+                        enqueued += len(groups)
+                        offset += len(groups)
+                        with enqueue_lock:
+                            enqueue_state["enqueued"] = enqueued
+                        logger.info("Enqueued %d / %d entities", enqueued, state.total_to_process)
+            except Exception as e:
+                with enqueue_lock:
+                    enqueue_state["error"] = str(e)
+                logger.exception("Enqueue thread failed")
+            finally:
+                with enqueue_lock:
+                    enqueue_state["done"] = True
+
+        enqueue_thread = threading.Thread(target=_enqueue_worker, daemon=True, name="mass-correct-enqueue")
+        enqueue_thread.start()
+
+        # ── Processor thread (main) ───────────────────────────────────
+        # Claims rows from canonicalization_queue as they appear and runs
+        # the LLM canonicalization pipeline on each.
         processed = 0
-        while not state._stop_event.is_set() and processed < enqueued:
+        empty_polls = 0
+
+        while not state._stop_event.is_set():
+            # Check if we've processed everything that was enqueued
+            with enqueue_lock:
+                eq_done = enqueue_state["done"]
+                eq_enqueued = enqueue_state["enqueued"]
+                eq_error = enqueue_state["error"]
+
+            if eq_error and processed == 0:
+                # Enqueue failed before any rows were available
+                logger.error("Enqueue failed before any processing could start: %s", eq_error)
+                break
+
+            if eq_done and processed >= eq_enqueued:
+                break
+
             batch = db.claim_next_canonicalization_batch(limit=1)
             if not batch:
-                break
+                # No rows ready yet — enqueue still running, or we drained it
+                if eq_done and processed >= eq_enqueued:
+                    break
+                empty_polls += 1
+                # Wait briefly for the enqueue thread to produce more rows
+                if state._stop_event.wait(timeout=2.0 if empty_polls < 5 else 5.0):
+                    break
+                continue
+
+            empty_polls = 0
 
             for row in batch:
                 if state._stop_event.is_set():
@@ -125,11 +175,11 @@ def _run_mass_correct(state: MassCorrectState, sample: int = 0, dry_run: bool = 
                 entity_text = row["entity_text"]
                 entity_label = row["entity_label"] or ""
                 state.current_entity = f"{entity_text} ({entity_label})"
-                state.current_phase = f"processing [{processed + 1}/{state.total_to_process}]"
+                state.current_phase = f"processing [{processed + 1}]"
 
                 logger.info(
-                    "  [%d/%d] canonicalizing '%s' (%s)",
-                    processed + 1, state.total_to_process, entity_text, entity_label,
+                    "  [%d] canonicalizing '%s' (%s)",
+                    processed + 1, entity_text, entity_label,
                 )
 
                 # Skip if auto-linked by a prior iteration in this run
@@ -181,6 +231,18 @@ def _run_mass_correct(state: MassCorrectState, sample: int = 0, dry_run: bool = 
                         db.mark_canonicalization_done(row["id"], f"no_tool (rounds={result['rounds']})")
                         logger.info("    -> no terminal tool (rounds=%d)", result["rounds"])
 
+                except InsufficientCreditsError as e:
+                    # API key is out of credits — stop trying immediately.
+                    logger.error("OpenRouter out of credits — auto-pausing mass-correct.")
+                    logger.error("    Detail: %s", e)
+                    state.errors += 1
+                    db.mark_canonicalization_failed(row["id"], "insufficient credits (paused)")
+                    state.current_phase = "paused — insufficient OpenRouter credits"
+                    state._stop_event.set()
+                    # Wait for enqueue thread to finish before returning
+                    enqueue_thread.join(timeout=5.0)
+                    return
+
                 except Exception as e:
                     logger.exception("    failed to canonicalize '%s'", entity_text)
                     state.errors += 1
@@ -191,6 +253,9 @@ def _run_mass_correct(state: MassCorrectState, sample: int = 0, dry_run: bool = 
 
             if state._stop_event.is_set():
                 state.current_phase = "stopped"
-                return
+                break
+
+        # Ensure enqueue thread has finished
+        enqueue_thread.join(timeout=10.0)
 
     state.current_phase = "complete"

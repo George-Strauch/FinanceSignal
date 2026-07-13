@@ -2295,6 +2295,24 @@ class RedditDatabase:
         except sqlite3.IntegrityError:
             return False
 
+    def enqueue_canonicalization_batch(self, groups: list[dict]) -> int:
+        """Bulk-enqueue entity groups into canonicalization_queue.
+
+        Each group dict must have 'entity_text' and 'entity_label' keys.
+        Does a single commit for the entire batch. Returns the number of
+        rows actually inserted (skips duplicates via INSERT OR IGNORE).
+        """
+        if not groups:
+            return 0
+        now = time.time()
+        rows = [(g["entity_text"], g.get("entity_label"), now) for g in groups]
+        cur = self.conn.executemany(
+            "INSERT OR IGNORE INTO canonicalization_queue (entity_text, entity_label, status, enqueued_at) VALUES (?, ?, 'ready', ?)",
+            rows,
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def claim_next_canonicalization_batch(self, limit: int = 25) -> list[dict]:
         now = time.time()
         rows = self.conn.execute(
@@ -2427,6 +2445,33 @@ class RedditDatabase:
             results[table] = cur.rowcount
         self.conn.commit()
         return results
+
+    def retry_failed_queue(self, queue: str) -> int:
+        """Reset all failed rows in a queue back to ready/queued for retry.
+
+        Clears claimed_at, processed_at, error, and result so the row looks
+        freshly enqueued (enqueued_at is preserved for ordering). Returns the
+        number of rows reset.
+        """
+        retry_map = {
+            "fetch":              ("fetch_queue",              "ready"),
+            "ner":                ("ner_queue",                "ready"),
+            "relevance":          ("relevance_queue",          "ready"),
+            "yfinance":           ("yfinance_queue",           "ready"),
+            "canonicalization":   ("canonicalization_queue",   "ready"),
+        }
+        if queue not in retry_map:
+            return 0
+        table, ready_status = retry_map[queue]
+        cur = self.conn.execute(
+            f"UPDATE {table} "
+            f"SET status = ?, claimed_at = NULL, processed_at = NULL, "
+            f"    error = NULL, result = NULL "
+            f"WHERE status = 'failed'",
+            (ready_status,),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def get_unlabeled_entity_groups(self, limit: int = 50, offset: int = 0) -> list[dict]:
         """Get grouped (entity_text, entity_label) pairs with entity_id IS NULL,

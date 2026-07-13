@@ -681,6 +681,10 @@
 .fq-sub {
   font-weight: 600;
   color: rgb(var(--hard-text));
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fq-type-badge {
@@ -739,6 +743,27 @@
   color: rgb(var(--soft-text));
   font-size: 0.85rem;
   padding: 10px 0;
+}
+
+.queue-retry-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: rgb(239, 68, 68);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.queue-retry-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+.queue-retry-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .fq-status-dot {
