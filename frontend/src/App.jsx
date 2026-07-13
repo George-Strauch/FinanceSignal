@@ -33,7 +33,7 @@ function App() {
         <Route path="/sources/reddit/:subreddit" element={<SubredditDetail />} />
         <Route path="/sources/reddit" element={<RedditSource />} />
         <Route path="/entities" element={<Entities />} />
-        <Route path="/entities/:entityText" element={<EntityDetail />} />
+        <Route path="/entities/:entityId" element={<EntityDetail />} />
         <Route path="/authors/:username" element={<AuthorDetail />} />
         <Route path="/trading" element={<Trading />} />
         <Route path="/trading/strategies/:id" element={<StrategyDetail />} />

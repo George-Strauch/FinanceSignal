@@ -17,7 +17,7 @@ FETCH_PERIOD = "2d"
 FETCH_INTERVAL = "1h"
 LOOKBACK_DAYS = 7  # Only archive tickers mentioned in last 7 days
 MAX_TICKERS = 200
-REQUEST_DELAY = 2.0  # seconds between yfinance calls
+REQUEST_DELAY = 3.0  # seconds between yfinance calls (1 at a time)
 
 
 @dataclass
@@ -60,7 +60,12 @@ def _fetch_hourly_prices(ticker: str) -> list[dict]:
 
 
 async def run_price_archiver(state: PriceArchiverState):
-    """Main entry point — fetch and archive hourly prices for recent tickers."""
+    """Main entry point — queue-driven fetch and archive of hourly prices.
+
+    Enqueues recently-mentioned tickers into yfinance_queue (job_type='price'),
+    then drains the queue claiming batches, fetching OHLCV data, and marking
+    each row success/failed.
+    """
     logger.info("Price archiver starting")
 
     # Reset counters
@@ -69,33 +74,46 @@ async def run_price_archiver(state: PriceArchiverState):
     state.tickers_failed = 0
     state.rows_inserted = 0
 
+    cutoff = time.time() - (LOOKBACK_DAYS * 24 * 3600)
     with RedditDatabase() as db:
-        cutoff = time.time() - (LOOKBACK_DAYS * 24 * 3600)
         tickers = db.get_tickers_mentioned_since(cutoff, limit=MAX_TICKERS)
-        state.tickers_total = len(tickers)
-        logger.info("Archiving prices for %d tickers", state.tickers_total)
+        db.reclaim_stale_yfinance(job_type="price")
+        db.enqueue_yfinance_batch("price", [t["ticker"] for t in tickers])
 
-        for t_info in tickers:
-            if state._stop_event.is_set():
-                break
+    state.tickers_total = len(tickers)
+    logger.info("Archiving prices for %d tickers", state.tickers_total)
 
-            ticker = t_info["ticker"]
-            state.current_ticker = ticker
+    while not state._stop_event.is_set():
+        with RedditDatabase() as db:
+            batch = db.claim_next_yfinance_batch("price", limit=1)
+        if not batch:
+            break
 
-            try:
-                rows = await asyncio.to_thread(_fetch_hourly_prices, ticker)
-                if rows:
-                    db.save_price_history(rows)
-                    state.rows_inserted += len(rows)
-                    state.tickers_fetched += 1
-                else:
-                    state.tickers_skipped += 1
-            except Exception as exc:
-                state.tickers_failed += 1
-                logger.debug("Price archive failed for %s: %s", ticker, exc)
+        with RedditDatabase() as db:
+            for row in batch:
+                if state._stop_event.is_set():
+                    break
 
-            # Rate limiting
-            await asyncio.sleep(state.request_delay)
+                ticker = row["ticker"]
+                state.current_ticker = ticker
+                db.mark_yfinance_started(row["id"])
+
+                try:
+                    rows = await asyncio.to_thread(_fetch_hourly_prices, ticker)
+                    if rows:
+                        db.save_price_history(rows)
+                        state.rows_inserted += len(rows)
+                        state.tickers_fetched += 1
+                        db.mark_yfinance_success(row["id"], f"{len(rows)} rows archived")
+                    else:
+                        state.tickers_skipped += 1
+                        db.mark_yfinance_success(row["id"], "no rows (empty)")
+                except Exception as exc:
+                    state.tickers_failed += 1
+                    db.mark_yfinance_failed(row["id"], str(exc)[:200])
+                    logger.debug("Price archive failed for %s: %s", ticker, exc)
+
+                await asyncio.sleep(state.request_delay)
 
     state.current_ticker = ""
     logger.info(

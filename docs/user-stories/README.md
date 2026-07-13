@@ -19,6 +19,8 @@ Stories are numbered in dependency order — later stories build on earlier ones
 | 7 — Enhancements        | 15–20 | Sentiment, comparison, heatmap, export, watchlist, alerts |
 | 8 — Historical Analysis | 22    | Historical evaluations, ticker discovery, extended windows |
 | 9 — LLM-Augmented Analysis | 23 | Event watcher, LLM tool calls, forward-looking signal tracking |
+| 10 — Relevance Ranking | 24 | Cross-encoder relevance scoring for posts |
+| 11 — Entity Resolution | 25 | Entity canonicalization, relationships & graphing |
 
 ## Story Format
 
@@ -65,3 +67,4 @@ When implementing stories, follow these rules:
 | 22 | Historical Evaluations & Time-Aware Discovery | not started |
 | 23 | Event Watcher: LLM-Managed Market Event Tracking | not started |
 | 24 | Cross-Encoder Relevance Ranking for Posts | complete |
+| 25 | Entity Canonicalization, Relationships & Graphing | not started |

@@ -99,6 +99,9 @@ export default function ProcessMonitor() {
   const [fetchQueue, setFetchQueue] = useState(null)
   const [nerQueue, setNerQueue] = useState(null)
   const [relevanceQueue, setRelevanceQueue] = useState(null)
+  const [tab, setTab] = useState('processes')
+  const [queuesData, setQueuesData] = useState(null)
+  const [queueFilter, setQueueFilter] = useState({ queue: null, phase: null, outcome: null })
   const logRef = useRef(null)
   const prevSelectedRef = useRef(null)
   const [now, setNow] = useState(Date.now())
@@ -283,6 +286,31 @@ export default function ProcessMonitor() {
       loadMoreRelPast()
     }
   }, [loadMoreRelPast])
+
+  // ── Unified Queues view ────────────────────────────────────────────
+  const [queueLimit, setQueueLimit] = useState(100)
+
+  const fetchQueues = useCallback(async () => {
+    const params = new URLSearchParams()
+    if (queueFilter.queue) params.set('queue', queueFilter.queue)
+    if (queueFilter.phase) params.set('phase', queueFilter.phase)
+    if (queueFilter.outcome) params.set('outcome', queueFilter.outcome)
+    params.set('limit', queueLimit)
+    params.set('offset', 0)
+    try {
+      const data = await get(`/processes/queues/all?${params.toString()}`)
+      setQueuesData(data)
+    } catch {
+      setQueuesData(null)
+    }
+  }, [queueFilter, queueLimit])
+
+  useEffect(() => {
+    if (tab !== 'queues') return
+    fetchQueues()
+    const id = setInterval(fetchQueues, 5000)
+    return () => clearInterval(id)
+  }, [tab, fetchQueues])
 
   // Initialize param values and reset edit mode when selecting a job
   useEffect(() => {
@@ -653,23 +681,39 @@ export default function ProcessMonitor() {
         <div className="param-inputs-grid">
           {selectedJob.params.map((p) => {
             const isText = p.type === 'text'
+            const isBoolean = p.type === 'boolean'
+            const isNumber = !isText && !isBoolean
             return (
               <div key={p.key} className="param-field">
                 <label className="param-label">
                   {p.label}
                   {p.unit && <span className="param-unit">({p.unit})</span>}
                 </label>
-                <input
-                  className="param-input"
-                  type={isText ? 'text' : 'number'}
-                  value={paramValues[p.key] ?? p.default}
-                  {...(!isText && { min: p.min, max: p.max, step: p.step })}
-                  disabled={selectedJob.running || selectedJob.schedule_active}
-                  onChange={(e) => handleParamChange(
-                    p.key,
-                    isText ? e.target.value : parseFloat(e.target.value),
-                  )}
-                />
+                {isBoolean ? (
+                  <label className="param-toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!paramValues[p.key] ?? p.default}
+                      disabled={selectedJob.running || selectedJob.schedule_active}
+                      onChange={(e) => handleParamChange(p.key, e.target.checked)}
+                    />
+                    <span className="param-toggle-label">
+                      {paramValues[p.key] ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </label>
+                ) : (
+                  <input
+                    className="param-input"
+                    type={isText ? 'text' : 'number'}
+                    value={paramValues[p.key] ?? p.default}
+                    {...(isNumber && { min: p.min, max: p.max, step: p.step })}
+                    disabled={selectedJob.running || selectedJob.schedule_active}
+                    onChange={(e) => handleParamChange(
+                      p.key,
+                      isText ? e.target.value : parseFloat(e.target.value),
+                    )}
+                  />
+                )}
                 {p.description && <span className="param-description">{p.description}</span>}
               </div>
             )
@@ -1272,17 +1316,164 @@ export default function ProcessMonitor() {
     )
   }
 
+  // ── Unified Queues view ──
+  const renderQueuesView = () => {
+    if (!queuesData) return <div className="fq-empty">Loading queues…</div>
+    const { items, total, stats, queues } = queuesData
+
+    const QUEUE_LABELS = {
+      fetch: 'Scraper / Fetch',
+      ner: 'NER + Tickers',
+      relevance: 'Relevance Scoring',
+      yfinance: 'yfinance (Fundamentals + Price)',
+      canonicalization: 'Canonicalization',
+    }
+    const PHASES = ['queued', 'inflight', 'completed']
+    const OUTCOMES = ['success', 'failed']
+
+    const statusDot = (phase, outcome) => {
+      if (phase === 'completed') return outcome === 'success' ? 'fq-dot-success' : 'fq-dot-failed'
+      if (phase === 'inflight') return 'fq-dot-progress'
+      return 'fq-dot-ready'
+    }
+
+    const selectedStats = queues ? Object.entries(stats) : []
+
+    return (
+      <>
+        <div className="dash-card">
+          <h2>Queue Summary</h2>
+          <div className="queue-stats-grid">
+            {selectedStats.map(([q, s]) => (
+              <div className="queue-stats-card" key={q}>
+                <div className="queue-stats-name">{QUEUE_LABELS[q] || q}</div>
+                <div className="queue-stats-row">
+                  <span className="qstat"><b>{s.ready || 0}</b> ready</span>
+                  <span className="qstat"><b>{s.in_progress || s.processing || 0}</b> inflight</span>
+                  <span className="qstat qstat-success"><b>{s.success || s.done || 0}</b> success</span>
+                  <span className="qstat qstat-failed"><b>{s.failed || 0}</b> failed</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="dash-card">
+          <div className="queue-filters">
+            <div className="queue-filter-group">
+              <span className="queue-filter-label">Queue</span>
+              <button
+                className={`queue-filter-btn${!queueFilter.queue ? ' active' : ''}`}
+                onClick={() => setQueueFilter((f) => ({ ...f, queue: null }))}
+              >All</button>
+              {Object.entries(QUEUE_LABELS).map(([q, label]) => (
+                <button
+                  key={q}
+                  className={`queue-filter-btn${queueFilter.queue === q ? ' active' : ''}`}
+                  onClick={() => setQueueFilter((f) => ({ ...f, queue: q }))}
+                >{label}</button>
+              ))}
+            </div>
+            <div className="queue-filter-group">
+              <span className="queue-filter-label">Phase</span>
+              <button
+                className={`queue-filter-btn${!queueFilter.phase ? ' active' : ''}`}
+                onClick={() => setQueueFilter((f) => ({ ...f, phase: null }))}
+              >All</button>
+              {PHASES.map((p) => (
+                <button
+                  key={p}
+                  className={`queue-filter-btn${queueFilter.phase === p ? ' active' : ''}`}
+                  onClick={() => setQueueFilter((f) => ({ ...f, phase: p }))}
+                >{p[0].toUpperCase() + p.slice(1)}</button>
+              ))}
+            </div>
+            <div className="queue-filter-group">
+              <span className="queue-filter-label">Outcome</span>
+              <button
+                className={`queue-filter-btn${!queueFilter.outcome ? ' active' : ''}`}
+                onClick={() => setQueueFilter((f) => ({ ...f, outcome: null }))}
+              >All</button>
+              {OUTCOMES.map((o) => (
+                <button
+                  key={o}
+                  className={`queue-filter-btn${queueFilter.outcome === o ? ' active' : ''}`}
+                  onClick={() => setQueueFilter((f) => ({ ...f, outcome: o }))}
+                >{o[0].toUpperCase() + o.slice(1)}</button>
+              ))}
+            </div>
+            <span className="queue-total">Showing {items.length} of {total.toLocaleString()}</span>
+          </div>
+        </div>
+
+        <div className="dash-card">
+          <h2>Queue Items ({items.length})</h2>
+          {items.length === 0 ? (
+            <p className="fq-empty">No queue items match the current filters.</p>
+          ) : (
+            <div className="fq-table-wrap">
+              <table className="fq-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Queue</th>
+                    <th>Subject</th>
+                    <th>Detail</th>
+                    <th>Phase</th>
+                    <th>Outcome</th>
+                    <th>Enqueued</th>
+                    <th>Processed</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((r) => (
+                    <tr key={`${r.queue}-${r.id}`} className={r.outcome === 'failed' ? 'fq-row-failed' : ''}>
+                      <td><span className={`fq-status-dot ${statusDot(r.phase, r.outcome)}`} /></td>
+                      <td><span className="qqueue-badge">{QUEUE_LABELS[r.queue] || r.queue}</span></td>
+                      <td className="fq-sub" title={r.subject}>{r.subject}</td>
+                      <td className="fq-sub" title={r.detail || ''}>{r.detail || '-'}</td>
+                      <td className="fq-status-cell">{r.phase}</td>
+                      <td className={`fq-status-cell fq-status-${r.outcome || 'pending'}`}>{r.outcome || '-'}</td>
+                      <td className="fq-time">{formatTime(r.enqueued_at)}</td>
+                      <td className="fq-time">{r.processed_at ? formatTime(r.processed_at) : '—'}</td>
+                      <td className="fq-error-cell" title={r.message || ''}>{r.message || ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
   return (
     <div className="process-monitor">
       <div className="process-header">
         <h1>Processes</h1>
+        <div className="process-tabs">
+          <button
+            className={`process-tab${tab === 'processes' ? ' active' : ''}`}
+            onClick={() => setTab('processes')}
+          >Processes</button>
+          <button
+            className={`process-tab${tab === 'queues' ? ' active' : ''}`}
+            onClick={() => setTab('queues')}
+          >Queues</button>
+        </div>
         <span className="process-summary">
-          {runningCount} of {jobs.length} running
+          {tab === 'processes' ? `${runningCount} of ${jobs.length} running` : 'Unified queue monitor'}
         </span>
       </div>
 
       {error && <div className="process-error">Failed to load: {error}</div>}
 
+      {tab === 'queues' ? (
+        renderQueuesView()
+      ) : (
+        <>
       {/* Job Cards */}
       <div className="job-cards-grid">
         {jobs.map((job) => (
@@ -1343,6 +1534,8 @@ export default function ProcessMonitor() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   )

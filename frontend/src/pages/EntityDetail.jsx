@@ -3,30 +3,18 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { FiArrowLeft, FiUser } from 'react-icons/fi'
+import { FiArrowLeft, FiTag, FiClock, FiEdit } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import PostFeed from '../components/PostFeed'
 import './EntityDetail.css'
 
 const WINDOWS = ['1d', '7d', '30d', '90d']
-const COUNT_MODES = [
-  { value: 'mentions', label: 'Mentions' },
-  { value: 'authors', label: 'Authors' },
-  { value: 'posts', label: 'Posts' },
-]
 
 const PALETTE = [
-  '99, 102, 241',
-  '244, 114, 182',
-  '52, 211, 153',
-  '251, 191, 36',
-  '96, 165, 250',
-  '167, 139, 250',
-  '248, 113, 113',
-  '45, 212, 191',
-  '253, 186, 116',
-  '156, 163, 175',
+  '99, 102, 241', '244, 114, 182', '52, 211, 153', '251, 191, 36',
+  '96, 165, 250', '167, 139, 250', '248, 113, 113', '45, 212, 191',
+  '253, 186, 116', '156, 163, 175',
 ]
 
 function pivotChartData(mentionsOverTime, subreddits) {
@@ -48,56 +36,37 @@ function formatTimestamp(ts) {
   return ts.slice(5, 10) + ' ' + ts.slice(11, 16)
 }
 
+function formatEpoch(epoch) {
+  if (!epoch) return '—'
+  return new Date(epoch * 1000).toLocaleDateString()
+}
+
 export default function EntityDetail() {
-  const { entityText } = useParams()
+  const { entityId } = useParams()
   const navigate = useNavigate()
   const [window, setWindow] = usePersistedState('entity-detail-window', '7d')
-  const [countMode, setCountMode] = usePersistedState('count-mode', 'mentions')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-
-  // Bottom tab state
-  const [bottomTab, setBottomTab] = usePersistedState('entity-bottom-tab', 'posts')
-  const [authorData, setAuthorData] = useState(null)
-  const [authorLoading, setAuthorLoading] = useState(false)
-
-  const decodedEntity = decodeURIComponent(entityText || '')
-  const countModeLabel = COUNT_MODES.find((m) => m.value === countMode)?.label.toLowerCase() || 'mentions'
-
-  const fetchAuthors = useCallback(async () => {
-    setAuthorLoading(true)
-    try {
-      const res = await get(`/entities/${encodeURIComponent(decodedEntity)}/authors?window=${window}`)
-      setAuthorData(res)
-    } catch {
-      setAuthorData(null)
-    } finally {
-      setAuthorLoading(false)
-    }
-  }, [decodedEntity, window])
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await get(`/entities/${encodeURIComponent(decodedEntity)}?window=${window}&count_mode=${countMode}`)
+      const res = await get(`/entities/canonical/${entityId}?window=${window}`)
       setData(res)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [decodedEntity, window, countMode])
+  }, [entityId, window])
 
   useEffect(() => { fetchDetail() }, [fetchDetail])
-  useEffect(() => {
-    if (bottomTab === 'authors') fetchAuthors()
-  }, [bottomTab, fetchAuthors])
 
   const subreddits = data ? Object.keys(data.mentions_by_subreddit) : []
   const chartData = data ? pivotChartData(data.mentions_over_time, subreddits) : []
-  const topSubreddit = subreddits.length > 0 ? subreddits[0] : '-'
+  const topSubreddit = subreddits.length > 0 ? subreddits[0] : '—'
 
   return (
     <div className="entity-detail">
@@ -107,29 +76,18 @@ export default function EntityDetail() {
         </button>
         <div className="ed-title-group">
           <div className="ed-title-row">
-            <h1 className="ed-entity-name">{decodedEntity}</h1>
+            <h1 className="ed-entity-name">{data?.canonical_text || 'Loading…'}</h1>
             {data && (
-              <span className={`entity-label-badge label-${data.entity_label}`}>
+              <span className={`entity-label-badge label-${data.canonical_label}`}>
                 {data.label_display}
               </span>
             )}
           </div>
           {data && (
             <span className="ed-mention-count">
-              {data.total_mentions.toLocaleString()} {countModeLabel}
+              {data.total_mentions.toLocaleString()} mentions
             </span>
           )}
-        </div>
-        <div className="ed-count-mode-selector">
-          {COUNT_MODES.map((m) => (
-            <button
-              key={m.value}
-              className={`window-btn ${countMode === m.value ? 'active' : ''}`}
-              onClick={() => setCountMode(m.value)}
-            >
-              {m.label}
-            </button>
-          ))}
         </div>
         <div className="ed-window-selector">
           {WINDOWS.map((w) => (
@@ -146,19 +104,64 @@ export default function EntityDetail() {
 
       {error && <div className="ed-error">Failed to load: {error}</div>}
 
+      {/* Description + metadata */}
+      {data?.description && (
+        <div className="dash-card">
+          <h2>Description</h2>
+          <p className="entity-description-text">{data.description}</p>
+          <div className="entity-meta-grid">
+            <div className="detail-field">
+              <span className="detail-field-label">Source</span>
+              <span className="detail-field-value">{data.source || '—'}</span>
+            </div>
+            <div className="detail-field">
+              <span className="detail-field-label">Created</span>
+              <span className="detail-field-value">{formatEpoch(data.created_at)}</span>
+            </div>
+            <div className="detail-field">
+              <span className="detail-field-label">Updated</span>
+              <span className="detail-field-value">{formatEpoch(data.updated_at)}</span>
+            </div>
+            {data.ticker_link && (
+              <div className="detail-field">
+                <span className="detail-field-label">Ticker</span>
+                <span
+                  className="entity-ticker-chip clickable"
+                  onClick={() => navigate(`/tickers/${data.ticker_link}`)}
+                >
+                  <FiTag /> {data.ticker_link}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Ticker tags */}
+      {data?.ticker_tags?.length > 0 && (
+        <div className="dash-card">
+          <h2>Ticker Tags</h2>
+          <div className="ticker-tag-chips">
+            {data.ticker_tags.map((t) => (
+              <span key={t.id} className="ticker-tag-chip" style={{ borderColor: t.color }}>
+                {t.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Stats Cards */}
       {data && (
         <div className="ed-stats">
           <div className="ed-stat-card">
             <div className="ed-stat-value">{data.total_mentions.toLocaleString()}</div>
-            <div className="ed-stat-label">Total {COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'}</div>
+            <div className="ed-stat-label">Total Mentions</div>
           </div>
-          {countMode !== 'posts' && (
-            <div className="ed-stat-card">
-              <div className="ed-stat-value">{data.unique_posts?.toLocaleString() ?? '-'}</div>
-              <div className="ed-stat-label">Unique Posts</div>
-            </div>
-          )}
+          <div className="ed-stat-card">
+            <div className="ed-stat-value">{data.unique_posts?.toLocaleString() ?? '-'}</div>
+            <div className="ed-stat-label">Unique Posts</div>
+          </div>
           <div className="ed-stat-card">
             <div className="ed-stat-value">{topSubreddit}</div>
             <div className="ed-stat-label">Top Subreddit</div>
@@ -167,12 +170,39 @@ export default function EntityDetail() {
             <div className="ed-stat-value">{subreddits.length}</div>
             <div className="ed-stat-label">Subreddits</div>
           </div>
+          <div className="ed-stat-card">
+            <div className="ed-stat-value">{data.relevance_count ?? 0}</div>
+            <div className="ed-stat-label">Relevance Scores</div>
+          </div>
+          <div className="ed-stat-card">
+            <div className="ed-stat-value">{data.aliases?.length ?? 0}</div>
+            <div className="ed-stat-label">Aliases</div>
+          </div>
+        </div>
+      )}
+
+      {/* Aliases */}
+      {data?.aliases?.length > 0 && (
+        <div className="dash-card">
+          <h2>Aliases ({data.aliases.length})</h2>
+          <div className="alias-chip-list">
+            {data.aliases.map((a) => (
+              <span key={a.id} className="alias-chip">
+                {a.alias_text}
+                {a.alias_label && (
+                  <span className={`entity-label-badge label-${a.alias_label}`} style={{ marginLeft: 6 }}>
+                    {a.alias_label}
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Mentions Over Time Chart */}
       <div className="ed-chart-section">
-        <h2>{COUNT_MODES.find((m) => m.value === countMode)?.label || 'Mentions'} Over Time</h2>
+        <h2>Mentions Over Time</h2>
         {loading && !data && (
           <div className="ed-chart-skeleton">
             <div className="skel-line skel-chart-area" />
@@ -252,98 +282,74 @@ export default function EntityDetail() {
         </div>
       )}
 
-      {/* Co-occurring Entities */}
-      {data && data.co_occurring_entities?.length > 0 && (
-        <div className="ed-cooccur-section">
-          <h2>Co-occurring Entities</h2>
-          <div className="ed-cooccur-list">
-            {data.co_occurring_entities.map((e) => (
-              <div
-                key={`${e.entity_text}-${e.entity_label}`}
-                className="ed-cooccur-item"
-                onClick={() => navigate(`/entities/${encodeURIComponent(e.entity_text)}`)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(ev) => ev.key === 'Enter' && navigate(`/entities/${encodeURIComponent(e.entity_text)}`)}
-              >
-                <span className="ed-cooccur-text">{e.entity_text}</span>
-                <span className={`entity-label-badge label-${e.entity_label}`}>
-                  {e.label_display}
-                </span>
-                <span className="ed-cooccur-count">{e.co_occurrence_count}</span>
-              </div>
-            ))}
+      {/* Relevance scores */}
+      {data?.relevance_scores?.length > 0 && (
+        <div className="dash-card">
+          <h2>Relevance Scores ({data.relevance_scores.length})</h2>
+          <div className="fq-table-wrap">
+            <table className="fq-table">
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Score</th>
+                  <th>Model</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.relevance_scores.map((r, i) => (
+                  <tr key={i}>
+                    <td className="fq-sub">{r.source_type}/{r.source_id.slice(0, 12)}</td>
+                    <td>
+                      <span className={`relevance-score-badge ${r.score >= 0.5 ? 'high' : 'low'}`}>
+                        {r.score.toFixed(3)}
+                      </span>
+                    </td>
+                    <td className="fq-time">{r.model}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {/* Bottom Tabs: Posts / By Author */}
-      <div className="ed-bottom-tabs">
-        <button
-          className={`ed-tab-btn ${bottomTab === 'posts' ? 'active' : ''}`}
-          onClick={() => setBottomTab('posts')}
-        >
-          Related Posts
-        </button>
-        <button
-          className={`ed-tab-btn ${bottomTab === 'authors' ? 'active' : ''}`}
-          onClick={() => setBottomTab('authors')}
-        >
-          <FiUser /> By Author
-        </button>
-      </div>
-
-      {bottomTab === 'posts' && (
-        <PostFeed
-          entity={decodedEntity}
-          title="Related Posts"
-        />
+      {/* Corrections history */}
+      {data?.corrections?.length > 0 && (
+        <div className="dash-card">
+          <h2><FiEdit /> Correction History ({data.corrections.length})</h2>
+          <div className="fq-table-wrap">
+            <table className="fq-table">
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Tool</th>
+                  <th>Pending Text</th>
+                  <th>Initiated By</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.corrections.map((c) => (
+                  <tr key={c.id}>
+                    <td><span className="qqueue-badge">{c.action}</span></td>
+                    <td>{c.llm_tool_used || '—'}</td>
+                    <td className="fq-sub">{c.pending_text || '—'}</td>
+                    <td>{c.initiated_by}</td>
+                    <td className="fq-time">{formatEpoch(c.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
-      {bottomTab === 'authors' && (
-        <div className="ed-author-section">
-          {authorLoading && !authorData && (
-            <div className="ed-author-skeleton">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="ed-author-row skeleton">
-                  <div className="skel-line" style={{ height: 18, width: '40%' }} />
-                  <div className="skel-line" style={{ height: 14, width: '20%' }} />
-                </div>
-              ))}
-            </div>
-          )}
-          {!authorLoading && (!authorData?.authors || authorData.authors.length === 0) && (
-            <p className="ed-no-data">No author data for this window.</p>
-          )}
-          {authorData?.authors?.length > 0 && (
-            <div className="ed-author-list">
-              {authorData.authors.map((a, i) => {
-                const maxCount = authorData.authors[0].total_count
-                const pct = maxCount > 0 ? (a.total_count / maxCount) * 100 : 0
-                return (
-                  <div
-                    key={a.author}
-                    className="ed-author-row"
-                    onClick={() => navigate(`/authors/${encodeURIComponent(a.author)}`)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => e.key === 'Enter' && navigate(`/authors/${encodeURIComponent(a.author)}`)}
-                  >
-                    <span className="ed-author-rank">{i + 1}</span>
-                    <span className="ed-author-name">u/{a.author}</span>
-                    <div className="ed-author-bar-track">
-                      <div className="ed-author-bar-fill" style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="ed-author-counts">
-                      {a.post_count}p / {a.comment_count}c
-                    </span>
-                    <span className="ed-author-total">{a.total_count}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+      {/* Related Posts */}
+      {data?.related_post_ids?.length > 0 && (
+        <PostFeed
+          entity={data.canonical_text}
+          title="Related Posts"
+        />
       )}
     </div>
   )

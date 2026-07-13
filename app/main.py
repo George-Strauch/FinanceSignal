@@ -40,6 +40,13 @@ async def lifespan(app: FastAPI):
     if bots:
         ensure_bot_strategies(bots)
     from app.process_manager import process_manager
+    # Reclaim all in-flight queue rows left behind by crashed workers
+    from sentinel.db import RedditDatabase
+    with RedditDatabase() as db:
+        reclaimed = db.reclaim_all_inflight()
+    if any(v > 0 for v in reclaimed.values()):
+        import logging
+        logging.getLogger(__name__).info("Reclaimed in-flight rows on startup: %s", reclaimed)
     process_manager.load_jobs()
     await process_manager.auto_start()
     yield

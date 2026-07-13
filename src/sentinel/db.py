@@ -1,10 +1,16 @@
 """RedditDatabase — SQLite storage with ticker_mentions and processed_sources."""
 
 import json
+import re
 import sqlite3
 import time
 
 from sentinel.config import DB_PATH
+
+
+def _tokenize(text: str) -> list[str]:
+    """Simple tokenizer for BM25 — lowercase, split on non-alphanumeric."""
+    return re.findall(r'[a-z0-9]+', text.lower())
 
 
 class RedditDatabase:
@@ -591,6 +597,145 @@ class RedditDatabase:
             CREATE INDEX IF NOT EXISTS idx_mr_source ON mention_relevance(source_type, source_id);
             CREATE INDEX IF NOT EXISTS idx_mr_entity ON mention_relevance(entity_type, entity_ref, score DESC);
             CREATE INDEX IF NOT EXISTS idx_mr_post_score ON mention_relevance(source_type, source_id, entity_type, entity_ref);
+
+            CREATE TABLE IF NOT EXISTS subreddits (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT NOT NULL UNIQUE,
+                is_active       INTEGER NOT NULL DEFAULT 1,
+                created_at      REAL NOT NULL,
+                updated_at      REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_subreddits_active ON subreddits(is_active);
+            CREATE INDEX IF NOT EXISTS idx_subreddits_name_lower ON subreddits(lower(name));
+
+            CREATE TABLE IF NOT EXISTS ticker_tag_sets (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                color           TEXT NOT NULL DEFAULT '#6b7280',
+                description     TEXT NOT NULL DEFAULT '',
+                created_at      REAL NOT NULL,
+                updated_at      REAL NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ticker_tag_members (
+                tag_id          TEXT NOT NULL REFERENCES ticker_tag_sets(id) ON DELETE CASCADE,
+                ticker          TEXT NOT NULL,
+                created_at      REAL NOT NULL,
+                PRIMARY KEY (tag_id, ticker)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ttm_tag ON ticker_tag_members(tag_id);
+            CREATE INDEX IF NOT EXISTS idx_ttm_ticker ON ticker_tag_members(ticker);
+
+            CREATE TABLE IF NOT EXISTS entities (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_text  TEXT NOT NULL,
+                canonical_label TEXT NOT NULL,
+                description     TEXT,
+                ticker_link     TEXT,
+                status          TEXT NOT NULL DEFAULT 'active',
+                merged_into     INTEGER,
+                created_at      REAL NOT NULL,
+                updated_at      REAL NOT NULL,
+                source          TEXT NOT NULL DEFAULT 'llm',
+                UNIQUE(canonical_text, canonical_label)
+            );
+            CREATE INDEX IF NOT EXISTS idx_entities_label ON entities(canonical_label);
+            CREATE INDEX IF NOT EXISTS idx_entities_ticker ON entities(ticker_link);
+            CREATE INDEX IF NOT EXISTS idx_entities_status ON entities(status);
+
+            CREATE TABLE IF NOT EXISTS entity_aliases (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_id    INTEGER NOT NULL REFERENCES entities(id),
+                alias_text      TEXT NOT NULL,
+                alias_label     TEXT,
+                created_at      REAL NOT NULL,
+                UNIQUE(canonical_id, alias_text, alias_label)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ea_canonical ON entity_aliases(canonical_id);
+            CREATE INDEX IF NOT EXISTS idx_ea_alias_lower ON entity_aliases(lower(alias_text));
+
+            CREATE TABLE IF NOT EXISTS entity_relationships (
+                entity_a       INTEGER NOT NULL REFERENCES entities(id),
+                entity_b       INTEGER NOT NULL REFERENCES entities(id),
+                relationship   TEXT NOT NULL,
+                weight         REAL,
+                bidirectional  INTEGER DEFAULT 1,
+                source         TEXT NOT NULL DEFAULT 'manual',
+                llm_session_id INTEGER,
+                created_at     REAL NOT NULL,
+                PRIMARY KEY (entity_a, entity_b, relationship)
+            );
+            CREATE INDEX IF NOT EXISTS idx_er_entity_a ON entity_relationships(entity_a);
+            CREATE INDEX IF NOT EXISTS idx_er_entity_b ON entity_relationships(entity_b);
+
+            CREATE TABLE IF NOT EXISTS entity_cooccurrence (
+                entity_a   INTEGER NOT NULL REFERENCES entities(id),
+                entity_b   INTEGER NOT NULL REFERENCES entities(id),
+                co_count   INTEGER NOT NULL,
+                last_seen  REAL,
+                PRIMARY KEY (entity_a, entity_b)
+            );
+
+            CREATE TABLE IF NOT EXISTS entity_corrections (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                action              TEXT NOT NULL,
+                pending_text        TEXT,
+                pending_label       TEXT,
+                source_entity_id    INTEGER,
+                target_canonical_id INTEGER,
+                new_canonical_id    INTEGER,
+                before_state        TEXT,
+                after_state         TEXT,
+                llm_session_id      INTEGER,
+                llm_tool_used       TEXT,
+                reasoning           TEXT,
+                initiated_by        TEXT NOT NULL,
+                created_at          REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ec_target ON entity_corrections(target_canonical_id);
+            CREATE INDEX IF NOT EXISTS idx_ec_action ON entity_corrections(action);
+            CREATE INDEX IF NOT EXISTS idx_ec_session ON entity_corrections(llm_session_id);
+
+            CREATE TABLE IF NOT EXISTS entity_ticker_links (
+                entity_id    INTEGER NOT NULL REFERENCES entities(id),
+                ticker       TEXT NOT NULL,
+                match_method TEXT NOT NULL,
+                confidence   REAL,
+                created_at   REAL NOT NULL,
+                PRIMARY KEY (entity_id, ticker)
+            );
+
+            CREATE TABLE IF NOT EXISTS canonicalization_queue (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_text     TEXT NOT NULL,
+                entity_label    TEXT,
+                status          TEXT NOT NULL DEFAULT 'ready',
+                enqueued_at     REAL NOT NULL,
+                claimed_at      REAL,
+                processing_started_at REAL,
+                processed_at    REAL,
+                error           TEXT,
+                result          TEXT,
+                UNIQUE(entity_text, entity_label)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cq_status ON canonicalization_queue(status);
+
+            CREATE TABLE IF NOT EXISTS yfinance_queue (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_type            TEXT NOT NULL,           -- 'fundamentals' | 'price'
+                ticker              TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'ready',   -- ready | in_progress | success | failed
+                enqueued_at         REAL NOT NULL,
+                claimed_at          REAL,
+                processing_started_at REAL,
+                completed_at        REAL,
+                result              TEXT,                    -- outcome summary (e.g. 'price=123.4 mcap=2e12' or rows archived)
+                error               TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_yq_status ON yfinance_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_yq_ready ON yfinance_queue(status, enqueued_at);
+            CREATE INDEX IF NOT EXISTS idx_yq_pending ON yfinance_queue(job_type, ticker, status);
+            CREATE INDEX IF NOT EXISTS idx_yq_type ON yfinance_queue(job_type, status);
         """)
         self.conn.commit()
 
@@ -604,6 +749,7 @@ class RedditDatabase:
             "ALTER TABLE ticker_fundamentals_latest ADD COLUMN long_business_summary TEXT",
             "ALTER TABLE named_entities ADD COLUMN is_canonical INTEGER DEFAULT 0",
             "ALTER TABLE named_entities ADD COLUMN canonical_link INTEGER DEFAULT NULL",
+            "ALTER TABLE named_entities ADD COLUMN entity_id INTEGER DEFAULT NULL",
             "ALTER TABLE fetch_queue ADD COLUMN source TEXT DEFAULT 'scraper'",
             "ALTER TABLE fetch_queue ADD COLUMN fetch_duration REAL",
             "ALTER TABLE relevance_queue ADD COLUMN attempts INTEGER DEFAULT 0",
@@ -619,6 +765,14 @@ class RedditDatabase:
         try:
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ne_canonical_link ON named_entities(canonical_link)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+        # Index on named_entities.entity_id for canonicalization joins
+        try:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ne_entity_id ON named_entities(entity_id)"
             )
         except sqlite3.OperationalError:
             pass
@@ -1452,6 +1606,37 @@ class RedditDatabase:
         """, params).fetchall()
         return [dict(r) for r in rows]
 
+    def get_unscored_canonical_mentions(self, source_type: str | None = None,
+                                        limit: int = 5000) -> list[dict]:
+        """Find named-entity mentions linked to a non-MISC canonical entity
+        that have no relevance score yet. Returns rows with ne_id, source_type,
+        source_id, entity_id (canonical id), canonical_text, canonical_label,
+        description, ticker_link."""
+        where = ""
+        params: list = []
+        if source_type:
+            where = "AND ne.source_type = ?"
+            params.append(source_type)
+        params.append(limit)
+        rows = self.conn.execute(f"""
+            SELECT ne.id AS ne_id, ne.source_type, ne.source_id, ne.entity_id,
+                   e.canonical_text, e.canonical_label, e.description, e.ticker_link
+            FROM named_entities ne
+            JOIN entities e ON ne.entity_id = e.id
+            LEFT JOIN mention_relevance mr
+                ON mr.source_type = ne.source_type
+                AND mr.source_id = ne.source_id
+                AND mr.entity_type = 'entity'
+                AND mr.entity_ref = CAST(ne.entity_id AS TEXT)
+            WHERE ne.entity_id IS NOT NULL
+              AND e.status = 'active'
+              AND e.canonical_label != 'MISC'
+              AND mr.id IS NULL
+            {where}
+            LIMIT ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
     # ── Ticker pipeline queries ────────────────────────────────────────
 
     def get_unprocessed_posts(self, limit=1000) -> list[dict]:
@@ -1677,6 +1862,750 @@ class RedditDatabase:
             "media_links": media, "media_pending": media_pending,
             "ticker_mentions": ticker_mentions, "processed_sources": processed,
         }
+
+    # ── Subreddits ──────────────────────────────────────────────────
+
+    def list_subreddits(self, active_only: bool = True) -> list[dict]:
+        sql = "SELECT id, name, is_active, created_at, updated_at FROM subreddits"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY lower(name)"
+        return [dict(r) for r in self.conn.execute(sql).fetchall()]
+
+    def list_subreddit_names(self, active_only: bool = True) -> list[str]:
+        sql = "SELECT name FROM subreddits"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY lower(name)"
+        return [r["name"] for r in self.conn.execute(sql).fetchall()]
+
+    def get_subreddit_by_name(self, name: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, name, is_active, created_at, updated_at FROM subreddits WHERE lower(name) = lower(?)",
+            (name,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def add_subreddit(self, name: str) -> dict:
+        now = time.time()
+        existing = self.get_subreddit_by_name(name)
+        if existing:
+            if not existing["is_active"]:
+                self.conn.execute(
+                    "UPDATE subreddits SET is_active = 1, updated_at = ? WHERE id = ?",
+                    (now, existing["id"]),
+                )
+                self.conn.commit()
+                existing["is_active"] = 1
+                existing["updated_at"] = now
+                return existing
+            return existing
+        cur = self.conn.execute(
+            "INSERT INTO subreddits (name, is_active, created_at, updated_at) VALUES (?, 1, ?, ?)",
+            (name, now, now),
+        )
+        self.conn.commit()
+        return self.get_subreddit_by_name(name)
+
+    def remove_subreddit(self, name: str) -> bool:
+        row = self.get_subreddit_by_name(name)
+        if not row:
+            return False
+        now = time.time()
+        self.conn.execute(
+            "UPDATE subreddits SET is_active = 0, updated_at = ? WHERE id = ?",
+            (now, row["id"]),
+        )
+        self.conn.commit()
+        return True
+
+    def set_subreddit_active(self, name: str, is_active: bool) -> bool:
+        row = self.get_subreddit_by_name(name)
+        if not row:
+            return False
+        now = time.time()
+        self.conn.execute(
+            "UPDATE subreddits SET is_active = ?, updated_at = ? WHERE id = ?",
+            (1 if is_active else 0, now, row["id"]),
+        )
+        self.conn.commit()
+        return True
+
+    def subreddit_exists(self, name: str) -> bool:
+        return self.get_subreddit_by_name(name) is not None
+
+    # ── Ticker Tag Sets ─────────────────────────────────────────────
+
+    def list_ticker_tag_sets(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, name, color, description, created_at, updated_at FROM ticker_tag_sets ORDER BY lower(name)"
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tickers"] = self.list_tickers_for_tag(r["id"])
+            result.append(d)
+        return result
+
+    def get_ticker_tag_set(self, tag_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, name, color, description, created_at, updated_at FROM ticker_tag_sets WHERE id = ?",
+            (tag_id,),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["tickers"] = self.list_tickers_for_tag(tag_id)
+        return d
+
+    def create_ticker_tag_set(self, tag_id: str, name: str, color: str = "#6b7280",
+                               description: str = "") -> dict:
+        now = time.time()
+        self.conn.execute(
+            "INSERT INTO ticker_tag_sets (id, name, color, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (tag_id, name, color, description, now, now),
+        )
+        self.conn.commit()
+        return self.get_ticker_tag_set(tag_id)
+
+    def update_ticker_tag_set(self, tag_id: str, name: str | None = None,
+                              color: str | None = None, description: str | None = None) -> dict | None:
+        updates = {}
+        if name is not None:
+            updates["name"] = name
+        if color is not None:
+            updates["color"] = color
+        if description is not None:
+            updates["description"] = description
+        if not updates:
+            return self.get_ticker_tag_set(tag_id)
+        updates["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params = list(updates.values()) + [tag_id]
+        self.conn.execute(f"UPDATE ticker_tag_sets SET {set_clause} WHERE id = ?", params)
+        self.conn.commit()
+        return self.get_ticker_tag_set(tag_id)
+
+    def delete_ticker_tag_set(self, tag_id: str) -> bool:
+        cur = self.conn.execute("DELETE FROM ticker_tag_sets WHERE id = ?", (tag_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def list_tickers_for_tag(self, tag_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT ticker FROM ticker_tag_members WHERE tag_id = ? ORDER BY ticker",
+            (tag_id,),
+        ).fetchall()
+        return [r["ticker"] for r in rows]
+
+    def add_tickers_to_tag(self, tag_id: str, tickers: list[str]) -> None:
+        now = time.time()
+        existing = set(self.list_tickers_for_tag(tag_id))
+        new_pairs = [(tag_id, t.upper(), now) for t in tickers if t.strip().upper() not in existing]
+        if new_pairs:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO ticker_tag_members (tag_id, ticker, created_at) VALUES (?, ?, ?)",
+                new_pairs,
+            )
+            self.conn.commit()
+
+    def remove_ticker_from_tag(self, tag_id: str, ticker: str) -> bool:
+        cur = self.conn.execute(
+            "DELETE FROM ticker_tag_members WHERE tag_id = ? AND ticker = ?",
+            (tag_id, ticker.upper()),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def get_ticker_tag_map(self) -> dict[str, list[dict]]:
+        """Return ticker → list of {id, name, color} for fast frontend lookup."""
+        rows = self.conn.execute(
+            """SELECT m.ticker, s.id, s.name, s.color
+               FROM ticker_tag_members m
+               JOIN ticker_tag_sets s ON m.tag_id = s.id
+               ORDER BY s.name"""
+        ).fetchall()
+        result: dict[str, list[dict]] = {}
+        for r in rows:
+            result.setdefault(r["ticker"], []).append({
+                "id": r["id"], "name": r["name"], "color": r["color"],
+            })
+        return result
+
+    def get_tickers_for_tag_id(self, tag_id: str) -> set[str]:
+        return set(self.list_tickers_for_tag(tag_id))
+
+    # ── Canonical Entities ──────────────────────────────────────────
+
+    def lookup_entity_by_text(self, text: str) -> dict | None:
+        """Direct lookup: find canonical entity by alias text or canonical_text (case-insensitive)."""
+        row = self.conn.execute(
+            """SELECT e.id, e.canonical_text, e.canonical_label, e.description,
+                      e.ticker_link, e.status
+               FROM entities e
+               LEFT JOIN entity_aliases a ON a.canonical_id = e.id
+               WHERE (lower(e.canonical_text) = lower(?) OR lower(a.alias_text) = lower(?))
+                 AND e.status = 'active'
+               LIMIT 1""",
+            (text, text),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def search_entities(self, query: str, limit: int = 10) -> list[dict]:
+        """Label-agnostic search of canonical entities by text fragment (LIKE-based)."""
+        pattern = f"%{query.lower()}%"
+        rows = self.conn.execute(
+            """SELECT DISTINCT e.id, e.canonical_text, e.canonical_label,
+                      e.description, e.ticker_link,
+                      (SELECT COUNT(*) FROM entity_aliases a WHERE a.canonical_id = e.id) AS alias_count
+               FROM entities e
+               LEFT JOIN entity_aliases a ON a.canonical_id = e.id
+               WHERE e.status = 'active'
+                 AND (lower(e.canonical_text) LIKE ? OR lower(a.alias_text) LIKE ?)
+               ORDER BY alias_count DESC
+               LIMIT ?""",
+            (pattern, pattern, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def search_entities_bm25(self, query: str, limit: int = 10) -> list[dict]:
+        """BM25-ranked search over canonical entity texts + aliases.
+
+        Builds an in-memory BM25 index from all active entities and their
+        aliases, ranks by relevance to the query, and returns top-N matches.
+
+        Each result includes: id, canonical_text, canonical_label, description,
+        ticker_link, alias_count, score, and the matched text (canonical or alias).
+        """
+        from rank_bm25 import BM25Okapi
+
+        entity_rows = self.conn.execute(
+            """SELECT e.id, e.canonical_text, e.canonical_label,
+                      e.description, e.ticker_link, e.status
+               FROM entities e WHERE e.status = 'active'"""
+        ).fetchall()
+
+        if not entity_rows:
+            return []
+
+        alias_rows = self.conn.execute(
+            """SELECT a.canonical_id, a.alias_text
+               FROM entity_aliases a
+               JOIN entities e ON a.canonical_id = e.id
+               WHERE e.status = 'active'"""
+        ).fetchall()
+
+        alias_map: dict[int, list[str]] = {}
+        for r in alias_rows:
+            alias_map.setdefault(r["canonical_id"], []).append(r["alias_text"])
+
+        corpus = []
+        entity_ids = []
+        matched_texts = []
+        for er in entity_rows:
+            texts = [er["canonical_text"]] + alias_map.get(er["id"], [])
+            combined = " ".join(texts)
+            corpus.append(_tokenize(combined))
+            entity_ids.append(er["id"])
+            matched_texts.append(texts)
+
+        bm25 = BM25Okapi(corpus)
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return []
+
+        scores = bm25.get_scores(query_tokens)
+
+        ranked = sorted(
+            zip(scores, entity_ids, matched_texts),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+
+        results = []
+        for score, eid, texts in ranked[:limit]:
+            if score <= 0:
+                break
+            er = next(e for e in entity_rows if e["id"] == eid)
+            results.append({
+                "id": er["id"],
+                "canonical_text": er["canonical_text"],
+                "canonical_label": er["canonical_label"],
+                "description": er["description"],
+                "ticker_link": er["ticker_link"],
+                "alias_count": len(alias_map.get(eid, [])),
+                "score": float(score),
+                "matched_texts": texts,
+            })
+        return results
+
+    def exact_match_entity(self, text: str) -> dict | None:
+        """Check if text exactly matches any canonical text or alias (case-insensitive).
+        Returns the entity dict if found, None otherwise.
+        """
+        return self.lookup_entity_by_text(text)
+
+    def get_entity(self, entity_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM entities WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def create_entity(self, canonical_text: str, canonical_label: str,
+                      description: str = "", ticker_link: str | None = None,
+                      source: str = "llm") -> dict:
+        now = time.time()
+        cur = self.conn.execute(
+            """INSERT INTO entities (canonical_text, canonical_label, description, ticker_link, status, created_at, updated_at, source)
+               VALUES (?, ?, ?, ?, 'active', ?, ?, ?)""",
+            (canonical_text, canonical_label, description, ticker_link, now, now, source),
+        )
+        self.conn.commit()
+        return self.get_entity(cur.lastrowid)
+
+    def update_entity(self, entity_id: int, **kwargs) -> dict | None:
+        allowed = {"canonical_text", "canonical_label", "description", "ticker_link", "status", "merged_into"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+        if not updates:
+            return self.get_entity(entity_id)
+        updates["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params = list(updates.values()) + [entity_id]
+        self.conn.execute(f"UPDATE entities SET {set_clause} WHERE id = ?", params)
+        self.conn.commit()
+        return self.get_entity(entity_id)
+
+    def delete_entity(self, entity_id: int) -> bool:
+        cur = self.conn.execute(
+            "UPDATE entities SET status = 'deleted', updated_at = ? WHERE id = ?",
+            (time.time(), entity_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def merge_entity(self, source_id: int, target_id: int) -> bool:
+        now = time.time()
+        self.conn.execute(
+            "UPDATE entities SET status = 'merged', merged_into = ?, updated_at = ? WHERE id = ?",
+            (target_id, now, source_id),
+        )
+        self.conn.execute(
+            "UPDATE entity_aliases SET canonical_id = ? WHERE canonical_id = ?",
+            (target_id, source_id),
+        )
+        self.conn.commit()
+        return True
+
+    # ── Entity Aliases ──────────────────────────────────────────────
+
+    def add_alias(self, canonical_id: int, alias_text: str, alias_label: str | None = None) -> bool:
+        now = time.time()
+        try:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO entity_aliases (canonical_id, alias_text, alias_label, created_at) VALUES (?, ?, ?, ?)",
+                (canonical_id, alias_text, alias_label, now),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def list_aliases(self, canonical_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT id, alias_text, alias_label, created_at FROM entity_aliases WHERE canonical_id = ? ORDER BY alias_text",
+            (canonical_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_alias(self, canonical_id: int, alias_text: str, alias_label: str | None = None) -> bool:
+        if alias_label:
+            cur = self.conn.execute(
+                "DELETE FROM entity_aliases WHERE canonical_id = ? AND alias_text = ? AND alias_label = ?",
+                (canonical_id, alias_text, alias_label),
+            )
+        else:
+            cur = self.conn.execute(
+                "DELETE FROM entity_aliases WHERE canonical_id = ? AND lower(alias_text) = lower(?)",
+                (canonical_id, alias_text),
+            )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_named_entity_link(self, entity_text: str, entity_label: str | None, canonical_id: int) -> int:
+        """Set entity_id on all named_entities rows matching (entity_text, entity_label).
+        If entity_label is None, links all rows with matching text regardless of label.
+        Returns number of rows updated."""
+        if entity_label:
+            cur = self.conn.execute(
+                "UPDATE named_entities SET entity_id = ? WHERE entity_text = ? AND entity_label = ?",
+                (canonical_id, entity_text, entity_label),
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE named_entities SET entity_id = ? WHERE entity_text = ?",
+                (canonical_id, entity_text),
+            )
+        self.conn.commit()
+        return cur.rowcount
+
+    # ── Entity Corrections ──────────────────────────────────────────
+
+    def add_correction(self, action: str, initiated_by: str, **kwargs) -> int:
+        now = time.time()
+        fields = {"action": action, "initiated_by": initiated_by, "created_at": now}
+        fields.update(kwargs)
+        cols = ", ".join(fields.keys())
+        placeholders = ", ".join("?" * len(fields))
+        cur = self.conn.execute(
+            f"INSERT INTO entity_corrections ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def list_corrections(self, canonical_id: int | None = None, initiated_by: str | None = None,
+                         limit: int = 100) -> list[dict]:
+        where = []
+        params = []
+        if canonical_id is not None:
+            where.append("target_canonical_id = ?")
+            params.append(canonical_id)
+        if initiated_by is not None:
+            where.append("initiated_by = ?")
+            params.append(initiated_by)
+        sql = "SELECT * FROM entity_corrections"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    # ── Canonicalization Queue ─────────────────────────────────────
+
+    def enqueue_canonicalization(self, entity_text: str, entity_label: str | None = None) -> bool:
+        now = time.time()
+        try:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO canonicalization_queue (entity_text, entity_label, status, enqueued_at) VALUES (?, ?, 'ready', ?)",
+                (entity_text, entity_label, now),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def claim_next_canonicalization_batch(self, limit: int = 25) -> list[dict]:
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT * FROM canonicalization_queue WHERE status = 'ready' ORDER BY enqueued_at LIMIT ?",
+            (limit,),
+        ).fetchall()
+        if rows:
+            ids = [r["id"] for r in rows]
+            placeholders = ",".join("?" * len(ids))
+            self.conn.execute(
+                f"UPDATE canonicalization_queue SET status = 'processing', claimed_at = ? WHERE id IN ({placeholders})",
+                [now] + ids,
+            )
+            self.conn.commit()
+        return [dict(r) for r in rows]
+
+    def mark_canonicalization_done(self, queue_id: int, result: str) -> None:
+        self.conn.execute(
+            "UPDATE canonicalization_queue SET status = 'done', processed_at = ?, result = ? WHERE id = ?",
+            (time.time(), result, queue_id),
+        )
+        self.conn.commit()
+
+    def mark_canonicalization_failed(self, queue_id: int, error: str) -> None:
+        self.conn.execute(
+            "UPDATE canonicalization_queue SET status = 'failed', processed_at = ?, error = ? WHERE id = ?",
+            (time.time(), error, queue_id),
+        )
+        self.conn.commit()
+
+    def get_ready_canonicalization(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM canonicalization_queue
+            WHERE status IN ('ready', 'processing')
+            ORDER BY enqueued_at ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_past_canonicalization(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        rows = self.conn.execute("""
+            SELECT * FROM canonicalization_queue
+            WHERE status IN ('done', 'failed')
+            ORDER BY processed_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_ready_canonicalization(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM canonicalization_queue WHERE status IN ('ready', 'processing')"
+        ).fetchone()[0]
+
+    def count_past_canonicalization(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM canonicalization_queue WHERE status IN ('done', 'failed')"
+        ).fetchone()[0]
+
+    def canonicalization_queue_stats(self) -> dict:
+        rows = self.conn.execute(
+            "SELECT status, COUNT(*) AS cnt FROM canonicalization_queue GROUP BY status"
+        ).fetchall()
+        return {r["status"]: r["cnt"] for r in rows}
+
+    def get_named_entities_by_canonical(self, canonical_id: int) -> list[dict]:
+        """Return distinct (source_type, source_id) rows linked to a canonical entity."""
+        rows = self.conn.execute(
+            """SELECT DISTINCT source_type, source_id
+               FROM named_entities
+               WHERE entity_id = ?""",
+            (canonical_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_recent_post_text_for_entity(self, entity_text: str, entity_label: str | None = None,
+                                        max_chars: int = 500) -> str | None:
+        """Return the first `max_chars` of the most recent post containing this
+        entity. Used to give the LLM context when canonicalizing."""
+        if entity_label:
+            row = self.conn.execute("""
+                SELECT p.title, p.selftext
+                FROM named_entities ne
+                JOIN posts p ON ne.source_type = 'post' AND ne.source_id = p.id
+                WHERE ne.entity_text = ? AND ne.entity_label = ?
+                ORDER BY ne.created_utc DESC
+                LIMIT 1
+            """, (entity_text, entity_label)).fetchone()
+        else:
+            row = self.conn.execute("""
+                SELECT p.title, p.selftext
+                FROM named_entities ne
+                JOIN posts p ON ne.source_type = 'post' AND ne.source_id = p.id
+                WHERE ne.entity_text = ?
+                ORDER BY ne.created_utc DESC
+                LIMIT 1
+            """, (entity_text,)).fetchone()
+        if not row:
+            return None
+        title = (row["title"] or "").strip()
+        selftext = (row["selftext"] or "").strip()
+        text = f"{title}\n{selftext}".strip()
+        return text[:max_chars] if text else None
+
+    def clear_all_relevance(self) -> tuple[int, int]:
+        """Drop all relevance scores + queue rows. Returns (mention_relevance_deleted, relevance_queue_deleted)."""
+        mr = self.conn.execute("DELETE FROM mention_relevance").rowcount
+        rq = self.conn.execute("DELETE FROM relevance_queue").rowcount
+        self.conn.commit()
+        return mr, rq
+
+    def reclaim_all_inflight(self) -> dict[str, int]:
+        """Reset ALL in-flight rows across every queue table back to ready/queued.
+
+        Called on container startup so crashed workers don't leave rows stuck
+        in 'in_progress'/'processing'. Returns a {queue: count} dict.
+        """
+        results = {}
+        reclaim_map = [
+            ("fetch_queue", "in_progress", "ready"),
+            ("ner_queue", "in_progress", "ready"),
+            ("relevance_queue", "in_progress", "ready"),
+            ("yfinance_queue", "in_progress", "ready"),
+            ("canonicalization_queue", "processing", "ready"),
+        ]
+        for table, inflight_status, ready_status in reclaim_map:
+            cur = self.conn.execute(
+                f"UPDATE {table} SET status = ?, claimed_at = NULL WHERE status = ?",
+                (ready_status, inflight_status),
+            )
+            results[table] = cur.rowcount
+        self.conn.commit()
+        return results
+
+    def get_unlabeled_entity_groups(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Get grouped (entity_text, entity_label) pairs with entity_id IS NULL,
+        ordered by occurrence count descending. For the mass-correct sample process."""
+        rows = self.conn.execute(
+            """SELECT entity_text, entity_label, COUNT(*) AS occurrence_count,
+                      MAX(created_utc) AS last_seen
+               FROM named_entities
+               WHERE entity_id IS NULL
+               GROUP BY entity_text, entity_label
+               ORDER BY occurrence_count DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_unlabeled_entity_groups(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT entity_text, entity_label FROM named_entities WHERE entity_id IS NULL)"
+        ).fetchone()[0]
+
+    # ── yfinance Queue ────────────────────────────────────────────────
+
+    def enqueue_yfinance(self, job_type: str, ticker: str) -> bool:
+        """Enqueue a yfinance fetch for a ticker. Returns True if newly
+        enqueued, False if a pending (ready/in_progress) row already exists."""
+        ticker = ticker.upper()
+        now = time.time()
+        existing = self.conn.execute(
+            "SELECT 1 FROM yfinance_queue WHERE job_type = ? AND ticker = ? AND status IN ('ready', 'in_progress') LIMIT 1",
+            (job_type, ticker),
+        ).fetchone()
+        if existing:
+            return False
+        self.conn.execute(
+            "INSERT INTO yfinance_queue (job_type, ticker, status, enqueued_at) VALUES (?, ?, 'ready', ?)",
+            (job_type, ticker, now),
+        )
+        self.conn.commit()
+        return True
+
+    def enqueue_yfinance_batch(self, job_type: str, tickers: list[str]) -> int:
+        """Bulk-enqueue tickers for a job type, skipping any that already have
+        a pending (ready/in_progress) row. Returns count newly inserted."""
+        if not tickers:
+            return 0
+        now = time.time()
+        upper = [t.upper() for t in tickers]
+        placeholders = ",".join("?" * len(upper))
+        pending = self.conn.execute(
+            f"SELECT ticker FROM yfinance_queue WHERE job_type = ? AND ticker IN ({placeholders}) AND status IN ('ready', 'in_progress')",
+            [job_type] + upper,
+        ).fetchall()
+        pending_set = {r["ticker"] for r in pending}
+        rows = [(job_type, t, now) for t in upper if t not in pending_set]
+        if not rows:
+            return 0
+        cur = self.conn.executemany(
+            "INSERT INTO yfinance_queue (job_type, ticker, status, enqueued_at) VALUES (?, ?, 'ready', ?)",
+            rows,
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def claim_next_yfinance_batch(self, job_type: str, limit: int = 50) -> list[dict]:
+        """Atomically claim up to N oldest 'ready' rows for a job type."""
+        now = time.time()
+        cur = self.conn.execute("""
+            UPDATE yfinance_queue
+            SET status = 'in_progress', claimed_at = ?
+            WHERE id IN (
+                SELECT id FROM yfinance_queue
+                WHERE status = 'ready' AND job_type = ?
+                ORDER BY enqueued_at ASC
+                LIMIT ?
+            )
+            RETURNING id
+        """, (now, job_type, limit))
+        ids = [r[0] for r in cur.fetchall()]
+        if not ids:
+            self.conn.commit()
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            f"SELECT * FROM yfinance_queue WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        self.conn.commit()
+        return [dict(r) for r in rows]
+
+    def mark_yfinance_started(self, queue_id: int):
+        self.conn.execute(
+            "UPDATE yfinance_queue SET processing_started_at = ? WHERE id = ?",
+            (time.time(), queue_id),
+        )
+        self.conn.commit()
+
+    def mark_yfinance_success(self, queue_id: int, result: str):
+        self.conn.execute(
+            "UPDATE yfinance_queue SET status = 'success', completed_at = ?, result = ? WHERE id = ?",
+            (time.time(), result, queue_id),
+        )
+        self.conn.commit()
+
+    def mark_yfinance_failed(self, queue_id: int, error: str):
+        self.conn.execute(
+            "UPDATE yfinance_queue SET status = 'failed', completed_at = ?, error = ? WHERE id = ?",
+            (time.time(), error, queue_id),
+        )
+        self.conn.commit()
+
+    def get_ready_yfinance(self, job_type: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+        type_filter = "AND job_type = ?" if job_type else ""
+        params = [limit, offset] if not job_type else [job_type, limit, offset]
+        rows = self.conn.execute(f"""
+            SELECT * FROM yfinance_queue
+            WHERE status IN ('ready', 'in_progress') {type_filter}
+            ORDER BY enqueued_at ASC
+            LIMIT ? OFFSET ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_past_yfinance(self, job_type: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+        type_filter = "WHERE job_type = ?" if job_type else ""
+        params = [limit, offset] if not job_type else [job_type, limit, offset]
+        rows = self.conn.execute(f"""
+            SELECT * FROM yfinance_queue
+            {type_filter}
+            ORDER BY completed_at DESC
+            LIMIT ? OFFSET ?
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_ready_yfinance(self, job_type: str | None = None) -> int:
+        if job_type:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM yfinance_queue WHERE status IN ('ready', 'in_progress') AND job_type = ?",
+                (job_type,),
+            ).fetchone()[0]
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM yfinance_queue WHERE status IN ('ready', 'in_progress')"
+        ).fetchone()[0]
+
+    def count_past_yfinance(self, job_type: str | None = None) -> int:
+        if job_type:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM yfinance_queue WHERE status IN ('success', 'failed') AND job_type = ?",
+                (job_type,),
+            ).fetchone()[0]
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM yfinance_queue WHERE status IN ('success', 'failed')"
+        ).fetchone()[0]
+
+    def yfinance_queue_stats(self, job_type: str | None = None) -> dict:
+        if job_type:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) AS cnt FROM yfinance_queue WHERE job_type = ? GROUP BY status",
+                (job_type,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT status, COUNT(*) AS cnt FROM yfinance_queue GROUP BY status"
+            ).fetchall()
+        return {r["status"]: r["cnt"] for r in rows}
+
+    def reclaim_stale_yfinance(self, stale_seconds: int = 600, job_type: str | None = None) -> int:
+        """Reset stuck in_progress rows older than threshold back to ready."""
+        cutoff = time.time() - stale_seconds
+        if job_type:
+            cur = self.conn.execute(
+                "UPDATE yfinance_queue SET status = 'ready', claimed_at = NULL WHERE status = 'in_progress' AND job_type = ? AND claimed_at < ?",
+                (job_type, cutoff),
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE yfinance_queue SET status = 'ready', claimed_at = NULL WHERE status = 'in_progress' AND claimed_at < ?",
+                (cutoff,),
+            )
+        self.conn.commit()
+        return cur.rowcount
 
     # ── Strategies ──────────────────────────────────────────────────
 

@@ -13,10 +13,11 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from app.db_logging import log_event
+from sentinel.config import CANONICALIZATION_LIVE
 from sentinel.db import RedditDatabase
 from sentinel.relevance_utils import (
     build_post_document, build_comment_document,
-    build_ner_query, build_ticker_query, should_score,
+    build_canonical_query, build_ticker_query, should_score,
 )
 from sentinel.tickers import extract_tickers
 
@@ -27,7 +28,7 @@ SPACY_BATCH_SIZE = 50    # spaCy pipe batch_size
 LOG_EVERY = 200
 POLL_INTERVAL = 10      # seconds to wait when queue is empty
 BACKFILL_CHUNK = 50000   # bulk backfill chunk size
-USEFUL_LABELS = {"PERSON", "ORG", "GPE", "MONEY", "PRODUCT", "EVENT", "NORP", "FAC", "WORK_OF_ART", "LAW"}
+USEFUL_LABELS = {"PERSON", "ORG", "GPE", "PRODUCT", "EVENT", "NORP", "FAC", "WORK_OF_ART", "LAW"}
 
 _nlp = None
 
@@ -285,6 +286,14 @@ def _process_ner_batch(db: RedditDatabase, batch: list[dict],
         db.save_named_entities(all_entities)
         db.conn.commit()
 
+        # Canonicalization: direct lookup for each unique (entity_text, entity_label)
+        # Sets entity_id on named_entities rows where an alias already exists.
+        # Does NOT enqueue LLM work — that only happens when CANONICALIZATION_LIVE=true.
+        try:
+            _link_canonical_entities(db, all_entities)
+        except Exception:
+            logger.debug("Canonicalization lookup failed (non-critical)", exc_info=True)
+
     # Batch save ticker mentions + mark processed
     if all_ticker_mentions:
         db.save_ticker_mentions(all_ticker_mentions)
@@ -324,8 +333,13 @@ def _process_ner_batch(db: RedditDatabase, batch: list[dict],
 def _batch_enqueue_relevance_entities(db: RedditDatabase,
                                        all_entities: list[dict],
                                        sources_with_scores: dict[tuple, str]) -> int:
-    """Bulk-lookup named_entities IDs and enqueue relevance for entities."""
-    # Collect lookup keys
+    """Enqueue relevance for NER entities that are linked to a canonical entity.
+
+    Only entities with a resolved canonical (entity_id set on named_entities)
+    are scored — the query is built from the canonical entity's name +
+    description so scores reflect the canonical identity. Unlinked entities
+    are deferred: canonicalization will enqueue relevance once they resolve.
+    """
     lookup_keys = []
     for e in all_entities:
         key = (e["source_type"], e["source_id"])
@@ -340,30 +354,51 @@ def _batch_enqueue_relevance_entities(db: RedditDatabase,
     for st, sid, et, el in lookup_keys:
         params.extend([st, sid, et, el])
     rows = db.conn.execute(f"""
-        SELECT id, source_type, source_id, entity_text, entity_label
+        SELECT id, source_type, source_id, entity_text, entity_label, entity_id
         FROM named_entities
         WHERE (source_type, source_id, entity_text, entity_label) IN ({placeholders})
     """, params).fetchall()
-    ne_ids = {}
+    ne_rows = {}
     for r in rows:
         key = (r["source_type"], r["source_id"], r["entity_text"], r["entity_label"])
-        ne_ids[key] = r["id"]
+        ne_rows[key] = r
+
+    # Cache canonical entities by id (avoid repeated lookups)
+    canonical_cache: dict[int, dict | None] = {}
+
+    def _get_canonical(eid: int | None) -> dict | None:
+        if eid is None:
+            return None
+        if eid not in canonical_cache:
+            canonical_cache[eid] = db.get_entity(eid)
+        return canonical_cache[eid]
 
     count = 0
     for e in all_entities:
         key = (e["source_type"], e["source_id"], e["entity_text"], e["entity_label"])
-        if key not in ne_ids:
+        ne = ne_rows.get(key)
+        if not ne:
+            continue
+        canonical_id = ne["entity_id"]
+        if canonical_id is None:
+            # Not yet canonicalized — relevance deferred until canonicalization resolves
+            continue
+        canonical = _get_canonical(canonical_id)
+        if not canonical:
+            continue
+        # Skip MISC buckets — junk entities are not scored
+        if (canonical.get("canonical_label") or "").upper() == "MISC":
             continue
         source_key = (e["source_type"], e["source_id"])
         document_text = sources_with_scores.get(source_key)
         if not document_text:
             continue
-        query = build_ner_query(e["entity_text"])
+        query = build_canonical_query(canonical)
         result = db.enqueue_relevance(
             source_type=e["source_type"],
             source_id=e["source_id"],
-            entity_type="ner",
-            entity_ref=str(ne_ids[key]),
+            entity_type="entity",
+            entity_ref=str(canonical_id),
             entity_text=query,
             document_text=document_text,
         )
@@ -404,3 +439,49 @@ def _batch_enqueue_relevance_tickers(db: RedditDatabase,
         if result is not None:
             count += 1
     return count
+
+
+def _link_canonical_entities(db: RedditDatabase, all_entities: list[dict]):
+    """Direct-lookup canonicalization: for each unique (entity_text, entity_label),
+    check if a canonical entity alias already exists. If so, set entity_id on the
+    named_entities row. If not, and CANONICALIZATION_LIVE is true, enqueue LLM work.
+
+    This is the catch mechanism: once an alias exists in entity_aliases, every
+    future extraction of that string bypasses the LLM entirely.
+    """
+    seen = set()
+    linked = 0
+    for e in all_entities:
+        key = (e["entity_text"], e["entity_label"])
+        if key in seen:
+            continue
+        seen.add(key)
+
+        canonical = db.lookup_entity_by_text(e["entity_text"])
+        if canonical:
+            updated = db.set_named_entity_link(e["entity_text"], e["entity_label"], canonical["id"])
+            if updated > 0:
+                linked += updated
+
+    if linked > 0:
+        logger.debug("Canonicalization: auto-linked %d named_entities rows via alias lookup", linked)
+
+    if not CANONICALIZATION_LIVE:
+        return
+
+    enqueued = 0
+    seen_text = set()
+    for e in all_entities:
+        key = (e["entity_text"], e["entity_label"])
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+
+        if db.lookup_entity_by_text(e["entity_text"]):
+            continue
+
+        if db.enqueue_canonicalization(e["entity_text"], e["entity_label"]):
+            enqueued += 1
+
+    if enqueued > 0:
+        logger.info("Canonicalization: enqueued %d new entities for LLM processing", enqueued)

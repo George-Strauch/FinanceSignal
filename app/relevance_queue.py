@@ -106,12 +106,10 @@ def _process_batch(db: RedditDatabase, batch: list[dict],
     for row in batch:
         db.mark_relevance_started(row["id"])
 
-    # Split into NER and ticker rows
-    ner_rows = [r for r in batch if r["entity_type"] == "ner"]
+    # Split into directly-scored rows (NER + canonical entity) and ticker rows
+    score_rows = [r for r in batch if r["entity_type"] in ("ner", "entity")]
     ticker_rows = [r for r in batch if r["entity_type"] == "ticker"]
 
-    # For NER rows: score directly (query already built at enqueue time)
-    score_rows = list(ner_rows)
     requeued = 0
     failed = 0
     errors = 0

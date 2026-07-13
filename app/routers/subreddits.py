@@ -1,66 +1,36 @@
-"""Subreddit management endpoints — list, add, remove."""
+"""Subreddit management endpoints — list, add, remove (backed by DB)."""
 
-import json
 import re
-import tempfile
-import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
-from app.config import DATA_DIR
 from app.database import get_db
 from sentinel.db import RedditDatabase
 
 router = APIRouter(prefix="/api/subreddits")
 
-SUBREDDITS_PATH = DATA_DIR / "subreddits.json"
 SUBREDDIT_RE = re.compile(r"^[A-Za-z0-9_]{1,21}$")
-
-_lock = threading.Lock()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
-def _read_subreddits() -> list[str]:
-    with open(SUBREDDITS_PATH) as f:
-        return json.load(f)
-
-
-def _write_subreddits(names: list[str]) -> None:
-    """Atomically overwrite subreddits.json."""
-    fd, tmp = tempfile.mkstemp(
-        dir=SUBREDDITS_PATH.parent, suffix=".json"
-    )
-    try:
-        with open(fd, "w") as f:
-            json.dump(names, f, indent=4)
-            f.write("\n")
-        Path(tmp).replace(SUBREDDITS_PATH)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-def _build_response(names: list[str], db: RedditDatabase) -> dict:
+def _build_response(db: RedditDatabase) -> dict:
     """Build the subreddit list response with stats from the DB."""
-    # Post counts per subreddit
-    rows = db.conn.execute(
+    sub_rows = db.list_subreddits(active_only=False)
+
+    post_counts_rows = db.conn.execute(
         "SELECT subreddit, COUNT(*) AS cnt FROM posts GROUP BY subreddit"
     ).fetchall()
-    post_counts = {r["subreddit"]: r["cnt"] for r in rows}
+    post_counts = {r["subreddit"]: r["cnt"] for r in post_counts_rows}
 
-    # Last fetched per subreddit
-    rows = db.conn.execute(
+    last_fetched_rows = db.conn.execute(
         "SELECT subreddit, MAX(fetched_at) AS last_fetch "
         "FROM fetch_history GROUP BY subreddit"
     ).fetchall()
-    last_fetched = {r["subreddit"]: r["last_fetch"] for r in rows}
-
-    names_lower = {n.lower() for n in names}
+    last_fetched = {r["subreddit"]: r["last_fetch"] for r in last_fetched_rows}
 
     def ts(epoch):
         if epoch is None:
@@ -68,12 +38,13 @@ def _build_response(names: list[str], db: RedditDatabase) -> dict:
         return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
 
     subreddits = []
-    for name in names:
+    for row in sub_rows:
+        name = row["name"]
         subreddits.append({
             "name": name,
             "post_count": post_counts.get(name, 0),
             "last_fetched_at": ts(last_fetched.get(name)),
-            "is_active": name.lower() in names_lower,
+            "is_active": bool(row["is_active"]),
         })
 
     return {"subreddits": subreddits}
@@ -100,8 +71,7 @@ class AddSubredditRequest(BaseModel):
 
 @router.get("")
 def list_subreddits(db: RedditDatabase = Depends(get_db)):
-    names = _read_subreddits()
-    return _build_response(names, db)
+    return _build_response(db)
 
 
 @router.post("", status_code=201)
@@ -109,18 +79,14 @@ def add_subreddit(
     body: AddSubredditRequest,
     db: RedditDatabase = Depends(get_db),
 ):
-    with _lock:
-        names = _read_subreddits()
-        existing_lower = {n.lower() for n in names}
-        if body.name.lower() in existing_lower:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Subreddit '{body.name}' already exists",
-            )
-        names.append(body.name)
-        _write_subreddits(names)
-
-    return _build_response(names, db)
+    existing = db.get_subreddit_by_name(body.name)
+    if existing and existing["is_active"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Subreddit '{body.name}' already exists",
+        )
+    db.add_subreddit(body.name)
+    return _build_response(db)
 
 
 @router.delete("/{name}")
@@ -128,15 +94,9 @@ def remove_subreddit(
     name: str,
     db: RedditDatabase = Depends(get_db),
 ):
-    with _lock:
-        names = _read_subreddits()
-        match = next((n for n in names if n.lower() == name.lower()), None)
-        if match is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Subreddit '{name}' not found",
-            )
-        names.remove(match)
-        _write_subreddits(names)
-
-    return _build_response(names, db)
+    if not db.remove_subreddit(name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Subreddit '{name}' not found",
+        )
+    return _build_response(db)

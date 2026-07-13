@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_db
 from sentinel.db import RedditDatabase
@@ -69,6 +69,7 @@ LABEL_DISPLAY = {
     "FAC": "Facilities",
     "WORK_OF_ART": "Works",
     "LAW": "Laws",
+    "MISC": "Misc",
 }
 
 
@@ -139,6 +140,78 @@ def search_entities(
     """, [*params, limit]).fetchall()
 
     return {"results": [dict(r) for r in rows]}
+
+
+@router.get("/canonical")
+def list_canonical_entities(
+    label: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: RedditDatabase = Depends(get_db),
+):
+    """List canonical entities from the entities table with their aliases,
+    article counts, and description metadata."""
+    where = "WHERE status = 'active'"
+    params: list = []
+    if label and label != "all":
+        where += " AND canonical_label = ?"
+        params.append(label)
+
+    rows = db.conn.execute(f"""
+        SELECT id, canonical_text, canonical_label, description, ticker_link, status
+        FROM entities
+        {where}
+        ORDER BY lower(canonical_text)
+        LIMIT ? OFFSET ?
+    """, [*params, limit, offset]).fetchall()
+
+    total = db.conn.execute(
+        f"SELECT COUNT(*) FROM entities {where}", params
+    ).fetchone()[0]
+
+    entity_ids = [r["id"] for r in rows]
+    alias_map: dict[int, list[dict]] = {eid: [] for eid in entity_ids}
+    count_map: dict[int, int] = {eid: 0 for eid in entity_ids}
+
+    if entity_ids:
+        placeholders = ",".join(["?"] * len(entity_ids))
+        alias_rows = db.conn.execute(
+            f"SELECT canonical_id, alias_text, alias_label FROM entity_aliases WHERE canonical_id IN ({placeholders}) ORDER BY alias_text",
+            entity_ids,
+        ).fetchall()
+        for ar in alias_rows:
+            alias_map.setdefault(ar["canonical_id"], []).append({
+                "alias_text": ar["alias_text"],
+                "alias_label": ar["alias_label"],
+            })
+
+        count_rows = db.conn.execute(
+            f"""SELECT ne.entity_id, COUNT(*) AS cnt
+                FROM named_entities ne
+                WHERE ne.entity_id IN ({placeholders})
+                GROUP BY ne.entity_id""",
+            entity_ids,
+        ).fetchall()
+        for cr in count_rows:
+            count_map[cr["entity_id"]] = cr["cnt"]
+
+    return {
+        "total": total,
+        "entities": [
+            {
+                "id": r["id"],
+                "canonical_text": r["canonical_text"],
+                "canonical_label": r["canonical_label"],
+                "label_display": LABEL_DISPLAY.get(r["canonical_label"], r["canonical_label"]),
+                "description": r["description"],
+                "ticker_link": r["ticker_link"],
+                "aliases": alias_map.get(r["id"], []),
+                "alias_count": len(alias_map.get(r["id"], [])),
+                "article_count": count_map.get(r["id"], 0),
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/top")
@@ -258,6 +331,136 @@ def entity_authors(
             }
             for r in rows
         ],
+    }
+
+
+@router.get("/canonical/{entity_id}")
+def canonical_entity_detail(
+    entity_id: int,
+    window: EntityWindow = EntityWindow.d7,
+    db: RedditDatabase = Depends(get_db),
+):
+    """Full detail for a canonical entity by ID — everything in one call:
+    canonical info, aliases, mention counts, subreddit breakdown, time series,
+    relevance scores, related posts, corrections history, ticker fundamentals.
+    """
+    entity = db.get_entity(entity_id)
+    if not entity or entity.get("status") != "active":
+        raise HTTPException(status_code=404, detail=f"Canonical entity {entity_id} not found")
+
+    cutoff = _cutoff(window.value)
+    bucket_fmt = _bucket_format(window.value)
+
+    # Aliases
+    aliases = db.list_aliases(entity_id)
+
+    # Mention stats from named_entities where entity_id = this canonical
+    agg = db.conn.execute("""
+        SELECT COUNT(*) AS cnt,
+               COUNT(DISTINCT CASE WHEN source_type = 'post' THEN source_id END) AS unique_posts
+        FROM named_entities
+        WHERE entity_id = ? AND created_utc >= ?
+    """, (entity_id, cutoff)).fetchone()
+    total_mentions = agg["cnt"] if agg else 0
+    unique_posts = agg["unique_posts"] if agg else 0
+
+    # By subreddit
+    sub_rows = db.conn.execute("""
+        SELECT subreddit, COUNT(*) AS cnt
+        FROM named_entities
+        WHERE entity_id = ? AND created_utc >= ?
+        GROUP BY subreddit ORDER BY cnt DESC
+    """, (entity_id, cutoff)).fetchall()
+    by_sub = {r["subreddit"]: r["cnt"] for r in sub_rows}
+
+    # Over time
+    time_rows = db.conn.execute("""
+        SELECT created_utc, subreddit
+        FROM named_entities
+        WHERE entity_id = ? AND created_utc >= ?
+    """, (entity_id, cutoff)).fetchall()
+    time_counter: dict[tuple[str, str], int] = Counter()
+    for r in time_rows:
+        bucket = _et_bucket(r["created_utc"], bucket_fmt, window.value)
+        time_counter[(bucket, r["subreddit"])] += 1
+    over_time = sorted(
+        [{"timestamp": k[0], "subreddit": k[1], "count": v}
+         for k, v in time_counter.items()],
+        key=lambda x: x["timestamp"],
+    )
+
+    # Relevance scores for this entity
+    rel_rows = db.conn.execute("""
+        SELECT source_type, source_id, score, model, created_at
+        FROM mention_relevance
+        WHERE entity_type = 'entity' AND entity_ref = ?
+        ORDER BY score DESC
+        LIMIT 100
+    """, (str(entity_id),)).fetchall()
+    relevance_scores = [
+        {
+            "source_type": r["source_type"],
+            "source_id": r["source_id"],
+            "score": r["score"],
+            "model": r["model"],
+            "created_at": r["created_at"],
+        }
+        for r in rel_rows
+    ]
+
+    # Related post IDs
+    post_id_rows = db.conn.execute("""
+        SELECT DISTINCT source_id
+        FROM named_entities
+        WHERE entity_id = ? AND source_type = 'post' AND created_utc >= ?
+        ORDER BY created_utc DESC
+        LIMIT 100
+    """, (entity_id, cutoff)).fetchall()
+    related_post_ids = [r["source_id"] for r in post_id_rows]
+
+    # Corrections history
+    corrections = db.list_corrections(canonical_id=entity_id, limit=50)
+
+    # Ticker fundamentals (if linked)
+    fundamentals = None
+    ticker_link = entity.get("ticker_link")
+    if ticker_link:
+        fundamentals = db.get_latest_fundamentals(ticker_link)
+
+    # Ticker tags (if linked)
+    ticker_tags = []
+    if ticker_link:
+        tag_rows = db.conn.execute("""
+            SELECT ts.id, ts.name, ts.color
+            FROM ticker_tag_members tm
+            JOIN ticker_tag_sets ts ON tm.tag_id = ts.id
+            WHERE tm.ticker = ?
+        """, (ticker_link.upper(),)).fetchall()
+        ticker_tags = [dict(r) for r in tag_rows]
+
+    return {
+        "id": entity["id"],
+        "canonical_text": entity["canonical_text"],
+        "canonical_label": entity["canonical_label"],
+        "label_display": LABEL_DISPLAY.get(entity["canonical_label"], entity["canonical_label"]),
+        "description": entity["description"],
+        "ticker_link": ticker_link,
+        "status": entity["status"],
+        "source": entity.get("source"),
+        "created_at": entity.get("created_at"),
+        "updated_at": entity.get("updated_at"),
+        "aliases": aliases,
+        "window": window.value,
+        "total_mentions": total_mentions,
+        "unique_posts": unique_posts,
+        "mentions_by_subreddit": by_sub,
+        "mentions_over_time": over_time,
+        "relevance_scores": relevance_scores,
+        "relevance_count": len(relevance_scores),
+        "related_post_ids": related_post_ids,
+        "corrections": corrections,
+        "fundamentals": fundamentals,
+        "ticker_tags": ticker_tags,
     }
 
 

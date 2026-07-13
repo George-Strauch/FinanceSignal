@@ -68,14 +68,8 @@ async def run_backfetch(state: BackfetchState):
 
 
 def _auto_select_subreddits() -> list[str]:
-    from app.config import DATA_DIR
-    from pathlib import Path
-    import json
-    subs_file = DATA_DIR / "subreddits.json"
-    if not subs_file.exists():
-        return []
-    with open(subs_file) as f:
-        return list(json.load(f))
+    from sentinel.config import load_subreddits
+    return load_subreddits()
 
 
 def _run_backfetch(state: BackfetchState):

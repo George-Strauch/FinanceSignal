@@ -32,8 +32,26 @@ this post discuss this entity?"
 - **Ticker mentions**: `"$TICKER — <company name>"` if a company name is
   known from `ticker_fundamentals_latest.name`, else `"$TICKER"`. Including
   the name lets the cross-encoder match semantically (NVIDIA / datacenter /
-  GPUs) rather than just the symbol.
-- **Named entities**: the entity text itself (e.g., `"Palantir"`, `"OpenAI"`).
+  GPUs) rather than just the symbol. Enqueued with `entity_type='ticker'`.
+- **Named entities (canonical)**: NER-derived entities are scored against
+  their **canonical** identity, not the raw extracted text. The query is
+  built by `build_canonical_query(entity)` from `relevance_utils.py`:
+  `"$TSLA — Tesla, Inc.: <truncated description>"`. This means a mention of
+  "Nvidia", "NVIDIA Corporation", or "NVDA" (when linked to the same
+  canonical entity) all share the same rich query, producing comparable
+  relevance scores. Enqueued with `entity_type='entity'`,
+  `entity_ref = <canonical entity id>`.
+
+### Canonical linkage (deferred relevance)
+
+An entity extracted by NER is only relevance-scored once it is linked to a
+canonical entity (`named_entities.entity_id` is set). If no canonical
+exists yet at extraction time, the relevance row is **deferred** — no row
+is enqueued. When canonicalization later resolves the entity (create or
+link, non-MISC), `enqueue_relevance_for_canonical()` enqueues relevance for
+every source that mentions that canonical. This keeps relevance scores
+consistent with the canonical identity and avoids scoring junk/MISC
+entities.
 
 ### Document construction
 

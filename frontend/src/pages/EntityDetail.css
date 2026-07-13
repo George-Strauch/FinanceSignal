@@ -468,3 +468,83 @@
     display: none;
   }
 }
+
+/* ── Canonical entity detail additions ── */
+.entity-description-text {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: rgb(var(--text-color));
+  margin-bottom: 16px;
+}
+
+.entity-meta-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(var(--soft-border), var(--soft-border-alpha));
+}
+.entity-meta-grid .detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.entity-meta-grid .detail-field-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(var(--soft-text));
+}
+.entity-meta-grid .detail-field-value {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.entity-ticker-chip.clickable {
+  cursor: pointer;
+}
+
+.alias-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.alias-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.1);
+  color: rgb(129, 140, 248);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.ticker-tag-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ticker-tag-chip {
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid;
+  background: rgba(var(--soft-border), 0.08);
+}
+
+.relevance-score-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.relevance-score-badge.high {
+  color: rgb(46, 204, 113);
+  background: rgba(46, 204, 113, 0.12);
+}
+.relevance-score-badge.low {
+  color: rgb(var(--soft-text));
+  background: rgba(var(--soft-border), 0.08);
+}

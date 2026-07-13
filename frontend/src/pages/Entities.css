@@ -251,6 +251,7 @@
 .label-FAC { background: rgba(45, 212, 191, 0.15); color: rgb(45, 212, 191); }
 .label-WORK_OF_ART { background: rgba(253, 186, 116, 0.15); color: rgb(200, 140, 70); }
 .label-LAW { background: rgba(156, 163, 175, 0.15); color: rgb(156, 163, 175); }
+.label-MISC { background: rgba(120, 120, 120, 0.15); color: rgb(140, 140, 140); }
 
 /* ── Subreddit Chips ──────────────────────────────────────────── */
 
@@ -356,4 +357,78 @@
   .entities-stats-bar {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+.expand-cell {
+  text-align: center;
+  cursor: pointer;
+  color: rgb(var(--soft-text));
+}
+
+.entities-table tr.expanded {
+  background: rgba(var(--accent-rgb, 99, 102, 241), 0.05);
+}
+
+.entities-table tr.alias-row {
+  background: rgb(var(--secondary-color));
+}
+
+.entities-table tr.alias-row td {
+  padding: 8px 12px;
+}
+
+.alias-table-wrap {
+  border-left: 2px solid rgb(var(--accent, #6366f1));
+  margin-left: 8px;
+}
+
+.alias-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.alias-table th {
+  text-align: left;
+  padding: 4px 12px;
+  color: rgb(var(--soft-text));
+  font-weight: 600;
+  border-bottom: 1px solid rgba(var(--soft-border), 0.3);
+}
+
+.alias-table td {
+  padding: 4px 12px;
+  border-bottom: 1px solid rgba(var(--soft-border), 0.15);
+}
+
+.alias-text-cell {
+  font-weight: 500;
+  color: rgb(var(--hard-text));
+}
+
+.entity-desc-cell {
+  max-width: 300px;
+  font-size: 0.78rem;
+  color: rgb(var(--soft-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-ticker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(var(--accent-rgb, 99, 102, 241), 0.15);
+  color: rgb(var(--accent, #6366f1));
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.entity-ticker-chip:hover {
+  background: rgba(var(--accent-rgb, 99, 102, 241), 0.25);
 }

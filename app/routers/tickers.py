@@ -16,7 +16,6 @@ from sentinel.sentiment import (
     signals_from_reddit_comments,
     signals_from_reddit_posts,
 )
-from app.routers.ticker_tags import _read as _read_tags
 
 router = APIRouter(prefix="/api/tickers")
 
@@ -87,15 +86,9 @@ def _et_bucket(unix_ts: float, fmt: str, window: str = "") -> str:
     return dt.strftime(fmt)
 
 
-def _tag_lookup() -> dict[str, list[dict]]:
-    """Build ticker → list of {id, name, color} from ticker_tags.json."""
-    data = _read_tags()
-    result: dict[str, list[dict]] = {}
-    for ts in data["tag_sets"]:
-        tag_info = {"id": ts["id"], "name": ts["name"], "color": ts["color"]}
-        for ticker in ts["tickers"]:
-            result.setdefault(ticker, []).append(tag_info)
-    return result
+def _tag_lookup(db: RedditDatabase) -> dict[str, list[dict]]:
+    """Build ticker → list of {id, name, color} from DB."""
+    return db.get_ticker_tag_map()
 
 
 def _ensure_indexes(db: RedditDatabase):
@@ -268,12 +261,7 @@ def ticker_directory(
         params.append(q.upper())
 
     if tag_id is not None:
-        tag_data = _read_tags()
-        tag_tickers: set[str] = set()
-        for ts in tag_data["tag_sets"]:
-            if ts["id"] == tag_id:
-                tag_tickers = set(ts["tickers"])
-                break
+        tag_tickers = db.get_tickers_for_tag_id(tag_id)
         if tag_tickers:
             placeholders = ",".join("?" * len(tag_tickers))
             where_conds.append(f"tm.ticker IN ({placeholders})")
@@ -353,7 +341,7 @@ def ticker_directory(
         [*params, *sector_params, limit, offset],
     ).fetchall()
 
-    tag_map = _tag_lookup()
+    tag_map = _tag_lookup(db)
     tickers_list = []
     for r in rows:
         tickers_list.append({
@@ -404,7 +392,7 @@ def search_tickers(
         (q.upper(), limit),
     ).fetchall()
 
-    tag_map = _tag_lookup()
+    tag_map = _tag_lookup(db)
     results = []
     for r in rows:
         d = dict(r)
@@ -581,7 +569,7 @@ def trending_tickers(
     sentiment_map = _compute_batch_sentiment(db, tickers_in_result, cutoff)
 
     # Tag lookup
-    tag_map = _tag_lookup()
+    tag_map = _tag_lookup(db)
 
     # Fundamentals lookup (market cap, pct change, price)
     fundamentals_map: dict[str, dict] = {}
@@ -826,7 +814,7 @@ def historical_trending(
                 ]
 
     sentiment_map = _compute_batch_sentiment(db, tickers_in_result, start_ts)
-    tag_map = _tag_lookup()
+    tag_map = _tag_lookup(db)
 
     fundamentals_map: dict[str, dict] = {}
     if tickers_in_result:
@@ -1129,7 +1117,7 @@ def ticker_detail(
         )
 
     sentiment = _compute_ticker_sentiment(db, ticker_upper, cutoff, upper)
-    tag_map = _tag_lookup()
+    tag_map = _tag_lookup(db)
 
     return {
         "ticker": ticker_upper,

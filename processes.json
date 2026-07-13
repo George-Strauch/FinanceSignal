@@ -28,11 +28,11 @@
             "on_failure": "stop"
         },
         {
-            "id": "ticker_reprocess",
-            "name": "Ticker Reprocess",
-            "description": "Re-extract tickers from all posts and comments (one-time cleanup)",
-            "module": "app.scraper",
-            "function": "reprocess_all_tickers",
+            "id": "ner_ticker_backfill",
+            "name": "NER + Ticker Backfill",
+            "description": "Finds all posts and comments not yet NER-processed and enqueues them into the NER queue for extraction. Use this to sweep up unaccounted-for sources without restarting the NER process.",
+            "module": "app.ner_backfill",
+            "function": "run_ner_backfill",
             "type": "oneshot",
             "auto_start": false,
             "on_failure": "stop"
@@ -178,6 +178,35 @@
                 }
             ],
             "on_failure": "stop"
+        },
+        {
+            "id": "entity_mass_correct",
+            "name": "Entity Mass-Correct",
+            "description": "Canonicalizes existing unlabeled named entities using LLM tool calling (deepseek-v4-flash). Sample mode processes top N entities as dry-run for review. Full mode applies decisions.",
+            "module": "app.entity_mass_correct",
+            "function": "run_entity_mass_correct",
+            "type": "oneshot",
+            "auto_start": false,
+            "on_failure": "stop",
+            "params": [
+                {
+                    "key": "sample",
+                    "label": "Sample Size",
+                    "type": "number",
+                    "default": 50,
+                    "min": 1,
+                    "max": 5000,
+                    "step": 1,
+                    "description": "How many of the top unlabeled entities (by occurrence count) to process. Set to 0 to process ALL unlabeled entities."
+                },
+                {
+                    "key": "dry_run",
+                    "label": "Dry Run Only (Log, Don't Apply)",
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When enabled, the LLM's canonicalization decisions are logged to the audit trail and trace DB but NOT applied to the database. Use this to review decision quality before going live. When disabled, decisions are applied immediately."
+                }
+            ]
         }
     ]
 }

@@ -478,6 +478,17 @@ class ProcessManager:
                 state.request_delay = float(params["request_delay_seconds"])
             return state
 
+        if proc.id == "entity_mass_correct":
+            from app.entity_mass_correct import MassCorrectState
+            state = MassCorrectState()
+            state._stop_event = proc._stop_event
+            state.log_buffer = proc.log_buffer
+            params = proc.current_params
+            if params.get("sample"):
+                state._sample = int(params["sample"])
+            state._dry_run = bool(params.get("dry_run", False))
+            return state
+
         return None
 
 

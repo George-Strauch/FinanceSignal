@@ -87,8 +87,7 @@ The app will be available at `http://localhost:5173`.
 ├── docs/                  # Documentation
 │   └── trading-bots.md    # Bot system docs
 ├── processes.json         # Background job registry
-├── subreddits.json        # Configured subreddit list
-└── ticker_tags.json       # Ticker tag sets
+└── reddit_data.db         # SQLite database (posts, comments, tickers, subreddits, tags)
 ```
 
 ## Trading Bots

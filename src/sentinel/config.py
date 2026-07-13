@@ -1,6 +1,6 @@
-"""Configuration loader — reads .env and subreddits.json, exports constants."""
+"""Configuration loader — reads .env, exports constants. Subreddit list is now
+served from the database (subreddits table); see load_subreddits()."""
 
-import json
 import os
 from pathlib import Path
 
@@ -53,12 +53,19 @@ BACKFILL_STATE_PATH = os.environ.get(
     "BACKFILL_STATE_PATH", str(DATA_DIR / "backfill_state.json")
 )
 
+CANONICALIZATION_LIVE = os.environ.get("CANONICALIZATION_LIVE", "false").lower() in ("1", "true", "yes")
+
 
 def load_subreddits() -> list[str]:
-    """Read subreddits.json and return a list of subreddit names."""
-    path = DATA_DIR / "subreddits.json"
-    with open(path) as f:
-        data = json.load(f)
-    if not isinstance(data, list) or not all(isinstance(s, str) for s in data):
-        raise ValueError(f"subreddits.json must be a JSON array of strings, got: {type(data)}")
-    return data
+    """Return the list of active subreddit names from the database.
+
+    Falls back to an empty list if the DB or table is unavailable (e.g. during
+    initial setup before migration). Uses a lazy import to avoid a circular
+    dependency: sentinel.db imports DB_PATH from this module.
+    """
+    try:
+        from sentinel.db import RedditDatabase
+        with RedditDatabase() as db:
+            return db.list_subreddit_names(active_only=True)
+    except Exception:
+        return []

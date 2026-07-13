@@ -437,3 +437,195 @@ async def get_relevance_queue(
         "past_total": past_total,
         "ready_total": ready_total,
     }
+
+
+# ── Unified Queues view ────────────────────────────────────────────────
+
+QUEUE_TYPES = ["fetch", "ner", "relevance", "yfinance", "canonicalization"]
+
+
+def _queue_select(queue: str) -> str:
+    """Return a normalized SELECT (with literals) for one queue table.
+
+    Normalized columns: queue, id, status, phase, outcome, enqueued_at,
+    processed_at, subject, detail, message.
+    phase:   'queued' | 'inflight' | 'completed'
+    outcome: 'success' | 'failed' | NULL
+    """
+    if queue == "fetch":
+        return """
+            SELECT 'fetch' AS queue, id, status,
+                   CASE WHEN status='in_progress' THEN 'inflight'
+                        WHEN status IN ('success','failed') THEN 'completed'
+                        ELSE 'queued' END AS phase,
+                   CASE WHEN status='success' THEN 'success'
+                        WHEN status='failed' THEN 'failed' ELSE NULL END AS outcome,
+                   enqueued_at,
+                   COALESCE(fetch_completed_at, fetch_started_at, claimed_at) AS processed_at,
+                   subreddit || ' / ' || fetch_type AS subject,
+                   url AS detail,
+                   COALESCE(error,
+                     CASE WHEN status='success' THEN 'posts='||COALESCE(posts_fetched,0)||' new='||COALESCE(posts_new,0) END
+                   ) AS message
+            FROM fetch_queue
+        """
+    if queue == "ner":
+        return """
+            SELECT 'ner' AS queue, id, status,
+                   CASE WHEN status='in_progress' THEN 'inflight'
+                        WHEN status IN ('success','failed') THEN 'completed'
+                        ELSE 'queued' END AS phase,
+                   CASE WHEN status='success' THEN 'success'
+                        WHEN status='failed' THEN 'failed' ELSE NULL END AS outcome,
+                   enqueued_at,
+                   COALESCE(completed_at, processing_started_at, claimed_at) AS processed_at,
+                   source_type || '/' || source_id AS subject,
+                   subreddit AS detail,
+                   COALESCE(error,
+                     CASE WHEN status='success' THEN 'entities='||COALESCE(entities_found,0) END
+                   ) AS message
+            FROM ner_queue
+        """
+    if queue == "relevance":
+        return """
+            SELECT 'relevance' AS queue, id, status,
+                   CASE WHEN status='in_progress' THEN 'inflight'
+                        WHEN status IN ('success','failed') THEN 'completed'
+                        ELSE 'queued' END AS phase,
+                   CASE WHEN status='success' THEN 'success'
+                        WHEN status='failed' THEN 'failed' ELSE NULL END AS outcome,
+                   enqueued_at,
+                   COALESCE(completed_at, processing_started_at, claimed_at) AS processed_at,
+                   source_type || '/' || source_id AS subject,
+                   entity_type || ':' || entity_ref AS detail,
+                   COALESCE(error,
+                     CASE WHEN status='success' THEN 'score='||ROUND(score,3) END
+                   ) AS message
+            FROM relevance_queue
+        """
+    if queue == "yfinance":
+        return """
+            SELECT 'yfinance' AS queue, id, status,
+                   CASE WHEN status='in_progress' THEN 'inflight'
+                        WHEN status IN ('success','failed') THEN 'completed'
+                        ELSE 'queued' END AS phase,
+                   CASE WHEN status='success' THEN 'success'
+                        WHEN status='failed' THEN 'failed' ELSE NULL END AS outcome,
+                   enqueued_at,
+                   COALESCE(completed_at, processing_started_at, claimed_at) AS processed_at,
+                   ticker AS subject,
+                   job_type AS detail,
+                   COALESCE(error, result) AS message
+            FROM yfinance_queue
+        """
+    if queue == "canonicalization":
+        return """
+            SELECT 'canonicalization' AS queue, id, status,
+                   CASE WHEN status='processing' THEN 'inflight'
+                        WHEN status IN ('done','failed') THEN 'completed'
+                        ELSE 'queued' END AS phase,
+                   CASE WHEN status='done' THEN 'success'
+                        WHEN status='failed' THEN 'failed' ELSE NULL END AS outcome,
+                   enqueued_at,
+                   COALESCE(processed_at, claimed_at) AS processed_at,
+                   entity_text AS subject,
+                   entity_label AS detail,
+                   COALESCE(error, result) AS message
+            FROM canonicalization_queue
+        """
+    return ""
+
+
+def _queue_stats_for(db: RedditDatabase, queue: str) -> dict:
+    if queue == "fetch":
+        return db.queue_stats()
+    if queue == "ner":
+        return db.ner_queue_stats()
+    if queue == "relevance":
+        return db.relevance_queue_stats()
+    if queue == "yfinance":
+        return db.yfinance_queue_stats()
+    if queue == "canonicalization":
+        return db.canonicalization_queue_stats()
+    return {}
+
+
+@router.get("/queues/all")
+async def get_unified_queues(
+    queue: str | None = None,
+    phase: str | None = None,
+    outcome: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: RedditDatabase = Depends(get_db),
+):
+    """Unified view across all work queues.
+
+    Query params:
+      queue   — one of fetch|ner|relevance|yfinance|canonicalization (omit for all)
+      phase   — queued|inflight|completed (omit for all)
+      outcome — success|failed (omit for all; only applies to completed rows)
+      limit/offset — pagination over the union
+    """
+    selected = [queue] if queue else QUEUE_TYPES
+    invalid = [q for q in selected if q not in QUEUE_TYPES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown queue: {invalid}. Valid: {QUEUE_TYPES}")
+
+    where_parts = []
+    if phase in ("queued", "inflight", "completed"):
+        where_parts.append(f"phase = '{phase}'")
+    if outcome in ("success", "failed"):
+        where_parts.append(f"outcome = '{outcome}'")
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    selects = []
+    for q in selected:
+        sel = _queue_select(q)
+        if sel:
+            selects.append(sel)
+    union = " UNION ALL ".join(selects)
+
+    # Count total (matching filter)
+    count_sql = f"SELECT COUNT(*) FROM ({union}) u {where_clause}"
+    total = db.conn.execute(count_sql).fetchone()[0]
+
+    # Ordered, paginated
+    order = "ORDER BY enqueued_at DESC"
+    if phase == "queued":
+        order = "ORDER BY enqueued_at ASC"
+    elif phase == "inflight":
+        order = "ORDER BY processed_at DESC"
+    elif phase == "completed":
+        order = "ORDER BY processed_at DESC"
+    data_sql = f"SELECT * FROM ({union}) u {where_clause} {order} LIMIT ? OFFSET ?"
+    rows = db.conn.execute(data_sql, (limit, offset)).fetchall()
+
+    items = []
+    for r in rows:
+        items.append({
+            "queue": r["queue"],
+            "id": r["id"],
+            "status": r["status"],
+            "phase": r["phase"],
+            "outcome": r["outcome"],
+            "enqueued_at": _ts(r["enqueued_at"]),
+            "processed_at": _ts(r["processed_at"]),
+            "subject": r["subject"],
+            "detail": r["detail"],
+            "message": r["message"],
+        })
+
+    # Per-queue stats summary
+    stats = {}
+    for q in selected:
+        stats[q] = _queue_stats_for(db, q)
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "queues": selected,
+        "stats": stats,
+    }

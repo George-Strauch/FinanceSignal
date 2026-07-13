@@ -51,6 +51,30 @@ def build_ner_query(entity_text: str) -> str:
     return (entity_text or "").strip()
 
 
+def build_canonical_query(entity: dict) -> str:
+    """Build the query string for a canonical entity.
+
+    Uses the canonical display name plus a truncated description so the
+    cross-encoder can match semantically. Ticker-linked entities also
+    include the ticker symbol.
+    """
+    name = (entity.get("canonical_text") or "").strip()
+    ticker = (entity.get("ticker_link") or "").strip().upper()
+    desc = (entity.get("description") or "").strip()
+
+    parts = []
+    if ticker:
+        parts.append(f"${ticker}")
+    if name:
+        parts.append(name)
+    query = " — ".join(parts) if parts else name
+
+    if desc:
+        # Truncate description to keep the query focused
+        query = f"{query}: {desc[:200]}"
+    return query.strip()
+
+
 def should_score(document: str) -> bool:
     """Check whether a document has enough text to warrant scoring."""
     return count_words(document) > WORD_COUNT_THRESHOLD

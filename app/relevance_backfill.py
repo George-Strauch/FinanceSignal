@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from sentinel.db import RedditDatabase
 from sentinel.relevance_utils import (
     build_post_document, build_comment_document,
-    build_ticker_query, build_ner_query, should_score,
+    build_canonical_query, build_ticker_query, should_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,10 +130,13 @@ def _backfill_ticker_mentions(state: RelevanceBackfillState):
 
 
 def _backfill_ner_mentions(state: RelevanceBackfillState):
-    """Find unscored named entity mentions and enqueue them."""
+    """Find unscored named-entity mentions linked to a canonical entity and
+    enqueue them. Uses the canonical entity's name+description as the query
+    (entity_type='entity'). Mentions without a canonical are skipped — they
+    are deferred until canonicalization resolves them."""
     with RedditDatabase() as db:
         while not state._stop_event.is_set():
-            mentions = db.get_unscored_ner_mentions(limit=BATCH_SIZE)
+            mentions = db.get_unscored_canonical_mentions(limit=BATCH_SIZE)
             if not mentions:
                 break
 
@@ -170,19 +173,19 @@ def _backfill_ner_mentions(state: RelevanceBackfillState):
                         state.pairs_skipped_short += 1
                         continue
 
-                    query = build_ner_query(m["entity_text"])
+                    query = build_canonical_query(m)
                     result = db.enqueue_relevance(
                         source_type=m["source_type"],
                         source_id=m["source_id"],
-                        entity_type="ner",
-                        entity_ref=str(m["ne_id"]),
+                        entity_type="entity",
+                        entity_ref=str(m["entity_id"]),
                         entity_text=query,
                         document_text=document,
                     )
                     if result is not None:
                         state.ner_pairs_enqueued += 1
                 except Exception:
-                    logger.exception("Failed to enqueue NER relevance for %s", m)
+                    logger.exception("Failed to enqueue canonical relevance for %s", m)
                     state.errors += 1
 
             if state.ner_pairs_enqueued % LOG_EVERY < BATCH_SIZE:

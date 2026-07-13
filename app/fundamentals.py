@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Conservative default: 2.0s between requests (1800/hr headroom).
 YFINANCE_RATE_LIMIT_PER_HOUR = 2000
 TARGET_UTILIZATION = 0.90
-DEFAULT_REQUEST_DELAY = 3600 / (YFINANCE_RATE_LIMIT_PER_HOUR * TARGET_UTILIZATION)  # ~2.0s
+DEFAULT_REQUEST_DELAY = 3.0  # seconds between yfinance calls (1 at a time)
 
 # Cooldown when we detect a rate limit (429 or repeated failures)
 RATE_LIMIT_COOLDOWN = 120  # 2 minutes
@@ -176,7 +176,12 @@ def fetch_single_ticker(ticker: str) -> tuple[dict | None, str | None]:
 
 
 async def run_fundamentals_cycle(state: FundamentalsState):
-    """Main entry point — called by the process manager each cycle."""
+    """Main entry point — called by the process manager each cycle.
+
+    Queue-driven: enqueues all recently-mentioned tickers into yfinance_queue
+    (job_type='fundamentals'), then drains the queue claiming batches,
+    fetching each ticker from yfinance, and marking the row success/failed.
+    """
     import asyncio
     cycle_start = time.time()
 
@@ -194,89 +199,106 @@ async def run_fundamentals_cycle(state: FundamentalsState):
     cutoff = time.time() - MENTION_LOOKBACK
     with RedditDatabase() as db:
         mentioned = db.get_tickers_mentioned_since(cutoff, limit=500)
+        # Reclaim stale in_progress rows from previous crashed runs
+        db.reclaim_stale_yfinance(job_type="fundamentals")
+        # Enqueue all mentioned tickers into the yfinance_queue
+        tickers = [item["ticker"] for item in mentioned]
+        db.enqueue_yfinance_batch("fundamentals", tickers)
 
-    state.tickers_total = len(mentioned)
-    logger.info("Found %d tickers mentioned in last 7 days", len(mentioned))
+    state.tickers_total = len(tickers)
+    logger.info("Enqueued %d tickers for fundamentals fetch", len(tickers))
 
-    for item in mentioned:
-        if state._stop_event and state._stop_event.is_set():
-            logger.info("Stop requested, ending cycle")
+    # Drain the queue in batches
+    while not state._stop_event.is_set():
+        with RedditDatabase() as db:
+            batch = db.claim_next_yfinance_batch("fundamentals", limit=1)
+        if not batch:
             break
 
-        ticker = item["ticker"]
-        state.current_ticker = ticker
+        for row in batch:
+            if state._stop_event.is_set():
+                break
+            ticker = row["ticker"]
+            state.current_ticker = ticker
 
-        # Check if data is fresh enough to skip
-        with RedditDatabase() as db:
-            age = db.get_fundamentals_age(ticker)
-        if age is not None and age < STALE_THRESHOLD:
-            state.tickers_skipped += 1
-            continue
-
-        # Handle cooldown
-        if state.in_cooldown:
-            now = time.time()
-            if now < state.cooldown_until:
-                wait = state.cooldown_until - now
-                logger.info("Rate limit cooldown: waiting %.0fs", wait)
-                if state._stop_event:
-                    try:
-                        await asyncio.wait_for(
-                            state._stop_event.wait(),
-                            timeout=wait,
-                        )
-                        break  # stop was requested
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    await asyncio.sleep(wait)
-            state.in_cooldown = False
-            state.consecutive_failures = 0
-
-        # Fetch from yfinance (in thread to not block event loop)
-        data, error = await asyncio.to_thread(fetch_single_ticker, ticker)
-
-        if data is not None:
-            # Success — save to db
+            # Check if data is fresh enough to skip
             with RedditDatabase() as db:
-                db.save_fundamentals(ticker, data, success=True)
-            state.tickers_fetched += 1
-            state.consecutive_failures = 0
-            logger.info("Fetched fundamentals for %s (price=%s, mcap=%s)",
-                        ticker, data.get("current_price"), data.get("market_cap"))
-        elif error == "rate_limited":
-            state.tickers_rate_limited += 1
-            state.consecutive_failures += 1
-            state.in_cooldown = True
-            state.cooldown_until = time.time() + RATE_LIMIT_COOLDOWN
-            logger.warning("Rate limited on %s, entering %ds cooldown",
-                           ticker, RATE_LIMIT_COOLDOWN)
-            # Save failure record
-            with RedditDatabase() as db:
-                db.save_fundamentals(ticker, {}, success=False, error="rate_limited")
-        elif error == "no_data" or error == "no_price_data":
-            # Not a real ticker or no data available — skip silently
-            state.tickers_skipped += 1
-            with RedditDatabase() as db:
-                db.save_fundamentals(ticker, {}, success=False, error=error)
-            logger.debug("Skipping %s: %s", ticker, error)
-        else:
-            # Other error
-            state.tickers_failed += 1
-            state.consecutive_failures += 1
-            with RedditDatabase() as db:
-                db.save_fundamentals(ticker, {}, success=False, error=error)
-            logger.warning("Failed to fetch %s: %s", ticker, error)
+                age = db.get_fundamentals_age(ticker)
+            if age is not None and age < STALE_THRESHOLD:
+                with RedditDatabase() as db:
+                    db.mark_yfinance_success(row["id"], "skipped (fresh)")
+                state.tickers_skipped += 1
+                continue
 
-        # Extended cooldown after many consecutive failures
-        if state.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-            state.in_cooldown = True
-            state.cooldown_until = time.time() + RATE_LIMIT_COOLDOWN * 2
-            logger.warning("Too many consecutive failures (%d), extended cooldown",
-                           state.consecutive_failures)
+            # Handle cooldown
+            if state.in_cooldown:
+                now = time.time()
+                if now < state.cooldown_until:
+                    wait = state.cooldown_until - now
+                    logger.info("Rate limit cooldown: waiting %.0fs", wait)
+                    if state._stop_event:
+                        try:
+                            await asyncio.wait_for(
+                                state._stop_event.wait(),
+                                timeout=wait,
+                            )
+                            break
+                        except asyncio.TimeoutError:
+                            pass
+                    else:
+                        await asyncio.sleep(wait)
+                state.in_cooldown = False
+                state.consecutive_failures = 0
 
-        # Rate limit delay
-        await asyncio.sleep(state.request_delay)
+            # Fetch from yfinance (in thread to not block event loop)
+            with RedditDatabase() as db:
+                db.mark_yfinance_started(row["id"])
+            data, error = await asyncio.to_thread(fetch_single_ticker, ticker)
+
+            if data is not None:
+                with RedditDatabase() as db:
+                    db.save_fundamentals(ticker, data, success=True)
+                    result_msg = (f"price={data.get('current_price')} "
+                                  f"mcap={data.get('market_cap')} "
+                                  f"name={data.get('name')}")
+                    db.mark_yfinance_success(row["id"], result_msg)
+                state.tickers_fetched += 1
+                state.consecutive_failures = 0
+                logger.info("Fetched fundamentals for %s (price=%s, mcap=%s)",
+                            ticker, data.get("current_price"), data.get("market_cap"))
+            elif error == "rate_limited":
+                state.tickers_rate_limited += 1
+                state.consecutive_failures += 1
+                state.in_cooldown = True
+                state.cooldown_until = time.time() + RATE_LIMIT_COOLDOWN
+                with RedditDatabase() as db:
+                    db.save_fundamentals(ticker, {}, success=False, error="rate_limited")
+                    db.mark_yfinance_failed(row["id"], "rate_limited")
+                logger.warning("Rate limited on %s, entering %ds cooldown",
+                               ticker, RATE_LIMIT_COOLDOWN)
+            elif error == "no_data" or error == "no_price_data":
+                state.tickers_skipped += 1
+                with RedditDatabase() as db:
+                    db.save_fundamentals(ticker, {}, success=False, error=error)
+                    db.mark_yfinance_failed(row["id"], error)
+                logger.debug("Skipping %s: %s", ticker, error)
+            else:
+                state.tickers_failed += 1
+                state.consecutive_failures += 1
+                with RedditDatabase() as db:
+                    db.save_fundamentals(ticker, {}, success=False, error=error)
+                    db.mark_yfinance_failed(row["id"], error)
+                logger.warning("Failed to fetch %s: %s", ticker, error)
+
+            # Extended cooldown after many consecutive failures
+            if state.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                state.in_cooldown = True
+                state.cooldown_until = time.time() + RATE_LIMIT_COOLDOWN * 2
+                logger.warning("Too many consecutive failures (%d), extended cooldown",
+                               state.consecutive_failures)
+
+            # Rate limit delay
+            await asyncio.sleep(state.request_delay)
 
     state.current_ticker = ""
     state.last_cycle_duration = time.time() - cycle_start

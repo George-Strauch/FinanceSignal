@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FiSearch, FiUsers } from 'react-icons/fi'
+import { FiSearch, FiUsers, FiTag } from 'react-icons/fi'
 import { get } from '../api/client'
 import usePersistedState from '../hooks/usePersistedState'
 import './Entities.css'
@@ -10,46 +10,30 @@ const LABEL_FILTERS = [
   { value: 'PERSON', display: 'People' },
   { value: 'ORG', display: 'Companies' },
   { value: 'GPE', display: 'Places' },
-  { value: 'MONEY', display: 'Money' },
   { value: 'PRODUCT', display: 'Products' },
   { value: 'EVENT', display: 'Events' },
   { value: 'NORP', display: 'Groups' },
+  { value: 'FAC', display: 'Facilities' },
+  { value: 'WORK_OF_ART', display: 'Works' },
+  { value: 'LAW', display: 'Laws' },
+  { value: 'MISC', display: 'Misc' },
 ]
-
-const SORT_OPTIONS = [
-  { value: 'mention_count', label: 'Occurrences' },
-  { value: 'last_seen', label: 'Last Seen' },
-  { value: 'entity_text', label: 'Alphabetical' },
-]
-
-function formatRelative(unixTs) {
-  if (!unixTs) return '—'
-  const diff = Math.floor((Date.now() / 1000) - unixTs)
-  if (diff < 0) return 'just now'
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`
-  return `${Math.floor(diff / 2592000)}mo ago`
-}
 
 export default function Entities() {
   const navigate = useNavigate()
   const [label, setLabel] = usePersistedState('entities-label', 'all')
-  const [sortKey, setSortKey] = usePersistedState('entities-sort', 'mention_count')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [stats, setStats] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const labelParam = label !== 'all' ? `&label=${label}` : ''
-      const res = await get(`/entities/top?limit=200${labelParam}`)
+      const res = await get(`/entities/canonical?limit=500${labelParam}`)
       setData(res)
     } catch (err) {
       setError(err.message)
@@ -64,47 +48,39 @@ export default function Entities() {
     get('/entities/stats').then(setStats).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    if (!searchQuery || searchQuery.length < 2) {
-      setSearchResults(null)
-      return
-    }
-    const timeout = setTimeout(async () => {
-      try {
-        const labelParam = label !== 'all' ? `&label=${label}` : ''
-        const res = await get(`/entities/search?q=${encodeURIComponent(searchQuery)}${labelParam}&limit=20`)
-        setSearchResults(res.results)
-      } catch {
-        setSearchResults(null)
-      }
-    }, 300)
-    return () => clearTimeout(timeout)
-  }, [searchQuery, label])
+  const allEntities = data?.entities || []
 
-  const entities = searchResults || data?.entities || []
-  const sortedEntities = [...entities].sort((a, b) => {
-    const dir = sortKey === 'entity_text' ? 1 : -1
-    if (sortKey === 'entity_text') {
-      return a.entity_text.localeCompare(b.entity_text)
-    }
-    return (a[sortKey] ?? 0) - (b[sortKey] ?? 0) > 0 ? dir : -dir
+  const filteredEntities = searchQuery
+    ? allEntities.filter(e => {
+        const q = searchQuery.toLowerCase()
+        return e.canonical_text?.toLowerCase().includes(q) ||
+               e.aliases?.some(a => a.alias_text?.toLowerCase().includes(q))
+      })
+    : allEntities
+
+  const sortedEntities = [...filteredEntities].sort((a, b) => {
+    return (b.article_count || 0) - (a.article_count || 0)
   })
 
-  const isEmpty = !loading && entities.length === 0
+  const isEmpty = !loading && sortedEntities.length === 0
 
   return (
     <div className="entities-page">
       <div className="entities-header">
         <div className="entities-title-row">
-          <h1>Named Entities</h1>
+          <h1>Canonical Entities</h1>
         </div>
       </div>
 
       {stats && (
         <div className="entities-stats-bar">
           <div className="entities-stat">
+            <span className="entities-stat-value">{data?.total?.toLocaleString() ?? '-'}</span>
+            <span className="entities-stat-label">Canonical Entities</span>
+          </div>
+          <div className="entities-stat">
             <span className="entities-stat-value">{stats.unique_entities?.toLocaleString() ?? '-'}</span>
-            <span className="entities-stat-label">Unique Entities</span>
+            <span className="entities-stat-label">Unique Extractions</span>
           </div>
           <div className="entities-stat">
             <span className="entities-stat-value">{stats.total_entity_mentions?.toLocaleString() ?? '-'}</span>
@@ -113,10 +89,6 @@ export default function Entities() {
           <div className="entities-stat">
             <span className="entities-stat-value">{stats.posts_processed?.toLocaleString() ?? '-'}</span>
             <span className="entities-stat-label">Posts Processed</span>
-          </div>
-          <div className="entities-stat">
-            <span className="entities-stat-value">{stats.comments_processed?.toLocaleString() ?? '-'}</span>
-            <span className="entities-stat-label">Comments Processed</span>
           </div>
         </div>
       )}
@@ -134,24 +106,12 @@ export default function Entities() {
           ))}
         </div>
         <div className="entities-controls-right">
-          <div className="entities-sort-wrap">
-            <span className="entities-sort-label">Sort</span>
-            <select
-              className="entities-sort-select"
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value)}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
           <div className="entities-search-wrap">
             <FiSearch className="entities-search-icon" />
             <input
               type="text"
               className="entities-search-input"
-              placeholder="Search entities..."
+              placeholder="Search canonical entities or aliases..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -176,8 +136,8 @@ export default function Entities() {
       {isEmpty && (
         <div className="entities-empty">
           <FiUsers className="entities-empty-icon" />
-          <p>No entities found.</p>
-          <p className="entities-empty-hint">Run the NER Extraction process to populate entity data.</p>
+          <p>No canonical entities found.</p>
+          <p className="entities-empty-hint">Run the Entity Mass-Correct process to canonicalize extracted entities.</p>
         </div>
       )}
 
@@ -186,43 +146,37 @@ export default function Entities() {
           <table className="entities-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Entity</th>
+                <th>Canonical Entity</th>
                 <th>Type</th>
-                <th>Occurrences</th>
-                <th>Last Seen</th>
-                <th>Subreddits</th>
+                <th>Articles</th>
+                <th>Aliases</th>
+                <th>Ticker</th>
               </tr>
             </thead>
             <tbody>
-              {sortedEntities.map((e, i) => (
+              {sortedEntities.map((e) => (
                 <tr
-                  key={`${e.entity_text}-${e.entity_label}`}
+                  key={e.id}
                   className="clickable-row"
-                  onClick={() => navigate(`/entities/${encodeURIComponent(e.entity_text)}`)}
+                  onClick={() => navigate(`/entities/${e.id}`)}
                 >
-                  <td className="rank-cell">{i + 1}</td>
-                  <td className="entity-text-cell">{e.entity_text}</td>
+                  <td className="entity-text-cell">{e.canonical_text}</td>
                   <td>
-                    <span className={`entity-label-badge label-${e.entity_label}`}>
-                      {e.label_display || e.entity_label}
+                    <span className={`entity-label-badge label-${e.canonical_label}`}>
+                      {e.label_display || e.canonical_label}
                     </span>
                   </td>
-                  <td>{(e.mention_count ?? 0).toLocaleString()}</td>
-                  <td className="entity-last-seen-cell">{formatRelative(e.last_seen)}</td>
+                  <td>{(e.article_count ?? 0).toLocaleString()}</td>
+                  <td>{e.alias_count ?? 0}</td>
                   <td>
-                    {e.subreddits && typeof e.subreddits === 'object' && !Array.isArray(e.subreddits) ? (
-                      <div className="entity-sub-chips">
-                        {Object.entries(e.subreddits).slice(0, 3).map(([sub, cnt]) => (
-                          <span key={sub} className="entity-sub-chip">r/{sub} ({cnt})</span>
-                        ))}
-                        {Object.keys(e.subreddits).length > 3 && (
-                          <span className="entity-sub-chip">+{Object.keys(e.subreddits).length - 3}</span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="entity-sub-count">{e.subreddit_count ?? '-'}</span>
-                    )}
+                    {e.ticker_link ? (
+                      <span
+                        className="entity-ticker-chip"
+                        onClick={(ev) => { ev.stopPropagation(); navigate(`/tickers/${e.ticker_link}`) }}
+                      >
+                        <FiTag /> {e.ticker_link}
+                      </span>
+                    ) : '—'}
                   </td>
                 </tr>
               ))}
